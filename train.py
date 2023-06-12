@@ -64,7 +64,7 @@ def main():
         # Progressive growth TODO: implement
         growth_signal = iter_counter / config.num_iters
         dataset.set_growth_signal(growth_signal)
-        generator.set_growth_signal(growth_signal)
+        generator.synthesis_net.set_growth_signal(growth_signal)
         discriminator.set_growth_signal(growth_signal)
 
         # Log

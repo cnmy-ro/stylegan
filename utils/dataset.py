@@ -14,23 +14,30 @@ class FFHQ128x128Dataset(Dataset):
         self.root = root
         self.split = split
         self.prog_growth = prog_growth
-        self.growth_signal = None
+        if prog_growth: self.working_resolution = 4
+        else:           self.working_resolution = 128
     
     def __len__(self):
-        if self.split == 'train':  return 50000
-        elif self.split == 'val':  return 20000    
+        if self.split == 'train':  return 60000
+        elif self.split == 'val':  return 10000    
 
     def __getitem__(self, idx):
         idx = int(idx)
         subdir = str(idx - idx % 1000).zfill(5)
         path = f"{self.root}/thumbnails128x128/{subdir}/{str(idx).zfill(5)}.png"
-        image = np.asarray(PIL.Image.open(path)) / 255.
+        image = PIL.Image.open(path)
+        
+        # TODO: rescale
+        if self.working_resolution < 128:
+            pass
+
+        image = np.asarray(image) / 255.
         image = image * 2 - 1
-        image = torch.tensor(image, dtype=torch.float).permute(2,0,1)
+        image = torch.tensor(image, dtype=torch.float).permute(2,0,1)        
         return {'image': image}
 
-    def set_growth_signal(self, growth_signal):
-        self.growth_signal = growth_signal
+    def double_working_resolution(self):
+        self.working_resolution *= 2
 
 
 

@@ -4,7 +4,7 @@ final_resolution = 128
 
 
 data_root = "/exports/lkeb-hpc/csrao/datasets/FFHQ"
-batch_size = 32
+final_batch_size = 32   # Corresponding to final resolution
 
 num_iters = 200000
 lr_g = 0.0001
