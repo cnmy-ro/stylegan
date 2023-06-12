@@ -16,5 +16,5 @@ To implement:
 - [ ] Style mixing regularization
 - [ ] Truncation trick regularization
 - [ ] Certain very specific parameter initializations
-- [ ] Sampling script: `sample.py`. Or maybe make this into an interactive notebook?
-- [ ] Inversion script: `invert.py`. Or maybe make this into an interactive notebook?
+- [ ] Sampling demo notebook: `notebooks/Sampling.ipynb`
+- [ ] Inversion demo notebook: `notebooks/Inversion.ipynb`

@@ -10,10 +10,11 @@ MAPPING_NET_DEPTH = 8
 
 class Generator(nn.Module):
 
-    def __init__(self, output_resolution=256, device='cpu'):
+    def __init__(self, final_resolution=256, prog_growth=False, device='cpu'):
         super().__init__()
+        self.prog_growth = prog_growth
         self.mapping_net = MappingNetwork(MAPPING_NET_DEPTH).to(device)
-        self.synthesis_net = SynthesisNetwork(output_resolution, device)
+        self.synthesis_net = SynthesisNetwork(final_resolution, prog_growth, device)
         
     def forward(self, z):
         z = z / (z**2 + 1e-8).sum().sqrt()
@@ -41,11 +42,14 @@ class MappingNetwork(nn.Module):
 
 class SynthesisNetwork(nn.Module):
 
-    def __init__(self, output_resolution, device):
+    def __init__(self, final_resolution, prog_growth, device):
 
         super().__init__()
-
-        resolutions = [2**i for i in range(2, 12) if 2**i <= output_resolution]
+        
+        self.prog_growth = prog_growth # TODO: implement
+        self.growth_signal = None
+        
+        resolutions = [2**i for i in range(2, 12) if 2**i <= final_resolution]
         
         self.max_channels = 512
         self.blocks = [
@@ -62,6 +66,9 @@ class SynthesisNetwork(nn.Module):
             
         self.to_rgb = nn.Sequential(nn.Conv2d(out_channels, 3, kernel_size=1, device=device), nn.Tanh())
         self.x_init = nn.parameter.Parameter(torch.ones((1, self.max_channels, 4, 4), device=device))
+
+    def set_growth_signal(self, growth_signal):
+        self.growth_signal = growth_signal
 
     def forward(self, w):
         x = torch.repeat_interleave(self.x_init, repeats=w.shape[0], dim=0)
@@ -126,14 +133,17 @@ class AdaINLayer(nn.Module):
 
 class Discriminator(nn.Module):
 
-    def __init__(self, output_resolution=256, device='cpu'):
+    def __init__(self, final_resolution=256, prog_growth=False, device='cpu'):
 
         super().__init__()
 
-        resolutions = [2**i for i in range(2, 12) if 2**i <= output_resolution]
+        self.prog_growth = prog_growth
+        self.growth_signal = None
+
+        resolutions = [2**i for i in range(2, 12) if 2**i <= final_resolution]
         resolutions = resolutions[::-1]
 
-        num_channels = 16 * (1024 // output_resolution)
+        num_channels = 16 * (1024 // final_resolution)
         backbone_layers = [nn.Conv2d(3, num_channels, kernel_size=1)]  # From RGB
 
         for res in resolutions[:-1]:            
@@ -155,6 +165,9 @@ class Discriminator(nn.Module):
             nn.Conv2d(num_channels, 1, kernel_size=1)  # Linear layer implemented as 1x1 conv2d
             ]
         self.classifier = nn.Sequential(*classifier_layers).to(device)
+
+    def set_growth_signal(self, growth_signal):
+        self.growth_signal = growth_signal
 
     def forward(self, x):
         features = self.backbone(x)
@@ -178,11 +191,11 @@ class Discriminator(nn.Module):
 if __name__ == '__main__':
     
     device = 'cuda'
-    output_resolution = 128
+    final_resolution = 128
     batch_size = 1
 
-    gen = Generator(output_resolution, device)
-    dis = Discriminator(output_resolution, device)
+    gen = Generator(final_resolution, device)
+    dis = Discriminator(final_resolution, device)
     print("init")
 
     z = torch.zeros((batch_size, LATENT_DIM), device=device)
@@ -191,7 +204,7 @@ if __name__ == '__main__':
     # print(x_fake.shape)
     print(dis(x_fake))
 
-    x_real = torch.zeros((batch_size, 3, output_resolution, output_resolution), device=device)
+    x_real = torch.zeros((batch_size, 3, final_resolution, final_resolution), device=device)
     pred = dis(x_real)
     # print(pred.shape)
     print(pred)
