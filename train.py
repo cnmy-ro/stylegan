@@ -75,11 +75,11 @@ def main():
     discriminator = Discriminator(config.final_resolution, config.prog_growth, config.device)
 
     # Optimizers
-    opt_g = Adam(generator.parameters(), lr=config.lr_g)
-    opt_d = Adam(discriminator.parameters(), lr=config.lr_g)    
+    opt_g = Adam(generator.parameters(), lr=0.001, betas=(0.0, 0.99))
+    opt_d = Adam(discriminator.parameters(), lr=0.001, betas=(0.0, 0.99))    
     
     # Dashboard
-    wandb.init(project=config.wandb_project, name=config.wandb_run_name)
+    wandb.init(project=config.project, name=config.run_name)
     
     # Training loop
     for iter_counter in range(1, config.num_iters + 1):

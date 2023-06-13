@@ -8,6 +8,8 @@ import numpy as np
 LATENT_DIM = 512
 MAPPING_NET_DEPTH = 8
 MAX_CHANNELS = 512
+MIN_OUTPUT_RESOLUTION = 8   # During progressive growing
+
 
 
 class Generator(nn.Module):
@@ -34,7 +36,7 @@ class MappingNetwork(nn.Module):
         layers = []
         for _ in range(mapping_net_depth):
             layers.extend([
-                Linear(bias_init_val=0.0, in_features=LATENT_DIM, out_features=LATENT_DIM),
+                Linear(LATENT_DIM, LATENT_DIM, bias_init=0.0, lr_multiplier=0.01),
                 nn.LeakyReLU(0.2)
             ])
         self.model = nn.Sequential(*layers).to(device)
@@ -53,7 +55,7 @@ class SynthesisNetwork(nn.Module):
         
         self.prog_growth = prog_growth
         if prog_growth:
-            output_resolution = 8
+            output_resolution = MIN_OUTPUT_RESOLUTION
             self.has_unfused_new_block = False
             self.new_block = None
             self.to_rgb_skip = None
@@ -70,7 +72,7 @@ class SynthesisNetwork(nn.Module):
             if res > 32: in_channels, out_channels = out_channels, out_channels // 2
             self.body.append(SynthesisNetworkBlock(in_channels, out_channels, device=device))
         
-        # toRGB layer at the working resolution
+        # toRGB layer at the output resolution
         self.to_rgb = Conv2d(out_channels, 3, kernel_size=1, device=device)
         
         # Initial lowest res (4x4) feature map
@@ -178,8 +180,8 @@ class AdaINLayer(nn.Module):
     
     def __init__(self, num_channels, device):
         super().__init__()
-        self.affine_layer_s = Linear(bias_init_val=1.0, in_features=LATENT_DIM, out_features=num_channels, device=device)
-        self.affine_layer_b = Linear(bias_init_val=0.0, in_features=LATENT_DIM, out_features=num_channels, device=device)
+        self.affine_layer_s = Linear(LATENT_DIM, num_channels, bias_init=1.0, device=device)
+        self.affine_layer_b = Linear(LATENT_DIM, num_channels, bias_init=0.0, device=device)
         self.eps = 1e-5
 
     def forward(self, x, w):
@@ -200,7 +202,7 @@ class Discriminator(nn.Module):
 
         self.prog_growth = prog_growth
         if prog_growth:
-            output_resolution = 8
+            output_resolution = MIN_OUTPUT_RESOLUTION
             self.has_unfused_new_block = False
             self.new_block = None
             self.to_rgb_skip = None
@@ -218,11 +220,11 @@ class Discriminator(nn.Module):
             self.body.append(DiscriminatorBlock(in_channels, out_channels, device=device))
         self.body = self.body[::-1]
 
-        # fromRGB layer at the working resolution
+        # fromRGB layer at the output resolution
         self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=device)
 
         # Last layer
-        self.classifier = Linear(bias_init_val=0.0, in_features=MAX_CHANNELS, out_features=1, device=device)
+        self.classifier = Linear(MAX_CHANNELS, 1, bias_init=0.0, device=device)
 
     def forward(self, x):
         x = self._compute_input_features(x)
@@ -291,7 +293,7 @@ class DiscriminatorBlock(nn.Module):
                 nn.LeakyReLU(0.2),
                 Conv2d(in_channels, out_channels, kernel_size=4),
                 nn.LeakyReLU(0.2)
-            ]            
+            ]
         else:
             layers= [
                 Conv2d(in_channels, in_channels, kernel_size=3, padding=1, padding_mode='reflect'),
@@ -309,30 +311,46 @@ class DiscriminatorBlock(nn.Module):
 
 
 # ---
-# Custom layers and layers with custom initialization
+# Custom layers
 
-class Linear(nn.Linear):
-    def __init__(self, bias_init_val, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.weight = nn.init.normal_(self.weight)
-        self.bias = nn.init.constant_(self.bias, val=bias_init_val)
+class Linear(nn.Module):
 
-class Conv2d(nn.Conv2d):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.weight = nn.init.normal_(self.weight)
-        self.bias = nn.init.constant_(self.bias, val=0.0)
+    def __init__(self, in_features, out_features, bias_init, lr_multiplier=1.0, device='cpu'):
+        super().__init__()
+        self.weight = nn.parameter.Parameter(torch.randn([out_features, in_features], device=device))
+        self.bias = nn.parameter.Parameter(torch.full([out_features], fill_value=bias_init, device=device))
+        self.weight_gain = lr_multiplier * (np.sqrt(2) / np.sqrt(in_features))  # For learning rate equalization
+        self.bias_gain = lr_multiplier                                          #
+    
+    def forward(self, x):
+        w = self.weight * self.weight_gain
+        b = self.bias * self.bias_gain
+        return F.linear(x, w, b)
+
+class Conv2d(nn.Module):
+
+    def __init__(self, in_channels, out_channels, kernel_size, padding=0, padding_mode='constant', device='cpu'):
+        super().__init__()        
+        self.weight = nn.parameter.Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size], device=device))
+        self.bias = nn.parameter.Parameter(torch.full([out_channels], fill_value=0.0, device=device))
+        self.weight_gain = np.sqrt(2) / np.sqrt(in_channels * kernel_size**2)   # For learning rate equalization
+        self.padding = padding
+        self.padding_mode = padding_mode
+
+    def forward(self, x):
+        w = self.weight * self.weight_gain
+        b = self.bias
+        x = F.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode)
+        return F.conv2d(x, w, b)
 
 class MinibatchSDLayer(nn.Module):
+
     def __init__(self):
         super().__init__()
     
     def forward(self, x):
-        std_map = torch.full(
-            (x.shape[0], 1, x.shape[2], x.shape[3]), 
-            fill_value=float(torch.std(x, dim=0, unbiased=False).mean()), 
-            device=x.device
-            )
+        std = torch.mean(torch.sqrt(torch.var(x, dim=0, unbiased=False) + 1e-8))
+        std_map = torch.full((x.shape[0], 1, x.shape[2], x.shape[3]), fill_value=float(std), device=x.device)
         x = torch.cat([x, std_map], dim=1)
         return x
 
@@ -343,7 +361,7 @@ class MinibatchSDLayer(nn.Module):
 if __name__ == '__main__':
     
     device = 'cuda'
-    final_resolution = 4
+    final_resolution = 8
     prog_growth = True
     batch_size = 1
 
