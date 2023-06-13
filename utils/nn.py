@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
 
 
 
 LATENT_DIM = 512
 MAPPING_NET_DEPTH = 8
-
+MAX_CHANNELS = 512
 
 
 class Generator(nn.Module):
@@ -46,55 +48,113 @@ class SynthesisNetwork(nn.Module):
     def __init__(self, final_resolution, prog_growth, device):
 
         super().__init__()
+
+        self.device = device
         
-        if prog_growth: # TODO: implement
-            self.working_resolution = 4
+        self.prog_growth = prog_growth
+        if prog_growth:
+            output_resolution = 8
+            self.has_unfused_new_block = False
+            self.new_block = None
+            self.to_rgb_skip = None
+            self.alpha = None            
         else:
-            self.working_resolution = final_resolution
+            output_resolution = final_resolution
         
-        resolutions = [2**i for i in range(2, 12) if 2**i <= self.working_resolution]
+        resolutions = [2**i for i in range(2, 12) if 2**i <= output_resolution]
         
-        self.max_channels = 512
-        self.blocks = [
-            SynthesisConvBlock(self.max_channels, self.max_channels,is_first_block=True, device=device),
-            SynthesisConvBlock(self.max_channels, self.max_channels, device=device)
-            ]
+        # Network body
+        self.body = [SynthesisNetworkBlock(MAX_CHANNELS, MAX_CHANNELS, is_first_block=True, device=device)]
+        in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
         for res in resolutions[1:]:
-            if res <= 32: in_channels, out_channels = self.max_channels, self.max_channels
-            else:         in_channels, out_channels = out_channels, out_channels // 2
-            self.blocks.extend([
-                SynthesisConvBlock(in_channels, out_channels, upsampling=True, device=device),
-                SynthesisConvBlock(out_channels, out_channels, device=device)
-                ])
-        self.to_rgb = nn.Conv2d(out_channels, 3, kernel_size=1, device=device)
-        self.x_init = nn.parameter.Parameter(torch.ones((1, self.max_channels, 4, 4), device=device))
+            if res > 32: in_channels, out_channels = out_channels, out_channels // 2
+            self.body.append(SynthesisNetworkBlock(in_channels, out_channels, device=device))
+        
+        # toRGB layer at the working resolution
+        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1, device=device)
+        
+        # Initial lowest res (4x4) feature map
+        self.x_init = nn.parameter.Parameter(torch.ones((1, MAX_CHANNELS, 4, 4), device=device))
 
     def forward(self, w):
         x = torch.repeat_interleave(self.x_init, repeats=w.shape[0], dim=0)
-        for block in self.blocks:
+        for block in self.body:
             x = block(x, w)
-        x = self.to_rgb(x)
+        x = self._compute_output_image(x, w)
+        return x       
+
+    def _compute_output_image(self, x, w):
+        if self.prog_growth:
+            if self.has_unfused_new_block:
+                x_main = self.new_block(x, w)
+                x_main = self.to_rgb(x_main)
+                x_skip = F.interpolate(x, scale_factor=2, mode='nearest')
+                x_skip = self.to_rgb_skip(x_skip)
+                x = (1 - self.alpha) * x_skip + self.alpha * x_main
+            else:
+                x = self.to_rgb(x)
+        else:
+            x = self.to_rgb(x)
         return x
+    
+    def grow_new_block(self):
+
+        # Grow a new block at 2x res
+        in_channels, out_channels = self.body[-1].out_channels, self.body[-1].out_channels // 2
+        self.new_block = SynthesisNetworkBlock(in_channels, out_channels, device=self.device)
+
+        # Replace current toRGB layer with 2x res one
+        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1, device=device)
+        
+        # Add a 2x res toRGB skip layer
+        self.to_rgb_skip = Conv2d(in_channels, 3, kernel_size=1, device=device)
+        
+        # Flag
+        self.has_unfused_new_block = True
+    
+    def fuse_new_block(self):
+        
+        # Fuse into the body
+        self.body.append(self.new_block)
+        
+        # Cleanup
+        self.new_block = None
+        self.to_rgb_skip = None
+        self.alpha = None
+        
+        # Flag
+        self.has_unfused_new_block = False
 
 
-class SynthesisConvBlock(nn.Module):
+class SynthesisNetworkBlock(nn.Module):
 
-    def __init__(self, in_channels, out_channels, upsampling=False, is_first_block=False, device='cpu'):
+    def __init__(self, in_channels, out_channels, is_first_block=False, device='cpu'):
         
         super().__init__()
         
-        self.layers = []
-        if not is_first_block:
-            if upsampling:
-                self.layers.append(nn.Upsample(scale_factor=2, mode='nearest'))    
-            self.layers.append(Conv2d(in_channels, out_channels, kernel_size=3, padding=1, padding_mode='reflect', device=device))
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         
+        self.layers = []
+
+        # 1st conv block
+        if not is_first_block:
+            self.layers.append(nn.Upsample(scale_factor=2, mode='nearest')) 
+            self.layers.append(Conv2d(in_channels, out_channels, kernel_size=3, padding=1, padding_mode='reflect', device=device))
         self.layers.extend([
             NoiseLayer(out_channels, device),
             AdaINLayer(out_channels, device),
             nn.LeakyReLU(0.2)
             ])
-
+        
+        # 2nd conv block
+        self.layers.extend([
+            Conv2d(out_channels, out_channels, kernel_size=3, padding=1, padding_mode='reflect', device=device),
+            NoiseLayer(out_channels, device),
+            AdaINLayer(out_channels, device),
+            nn.LeakyReLU(0.2)
+            ])
+   
     def forward(self, x, w):
         for layer in self.layers:
             if isinstance(layer, AdaINLayer): x = layer(x, w)
@@ -136,66 +196,120 @@ class Discriminator(nn.Module):
 
         super().__init__()
 
-        if prog_growth: # TODO: implement
-            self.working_resolution = 4
+        self.device = device
+
+        self.prog_growth = prog_growth
+        if prog_growth:
+            output_resolution = 8
+            self.has_unfused_new_block = False
+            self.new_block = None
+            self.to_rgb_skip = None
+            self.alpha = None   
         else:
-            self.working_resolution = final_resolution
+            output_resolution = final_resolution
 
-        resolutions = [2**i for i in range(2, 12) if 2**i <= self.working_resolution]
+        resolutions = [2**i for i in range(2, 12) if 2**i <= output_resolution]
+        
+        # Network body
+        self.body = [DiscriminatorBlock(MAX_CHANNELS, MAX_CHANNELS, is_last_block=True, device=device)]  # Last block, corresponding to lowest res (4x4)
+        in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
+        for res in resolutions[1:]: # Blocks laid out in reverse order - i.e. lo-res to hi-res
+            if res > 32: in_channels, out_channels = in_channels // 2, in_channels
+            self.body.append(DiscriminatorBlock(in_channels, out_channels, device=device))
+        self.body = self.body[::-1]
 
-        max_channels = 512
-        backbone_layers = []
-        for res in resolutions[1:]: # Layers laid out in reverse order - i.e. lo-res to hi-res
-            if res <= 32: in_channels, out_channels = max_channels, max_channels
-            else:         in_channels, out_channels = in_channels // 2, in_channels
-            backbone_layers.extend([                              
-                nn.AvgPool2d(kernel_size=2, stride=2),
+        # fromRGB layer at the working resolution
+        self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=device)
+
+        # Last layer
+        self.classifier = Linear(bias_init_val=0.0, in_features=MAX_CHANNELS, out_features=1, device=device)
+
+    def forward(self, x):
+        x = self._compute_input_features(x)
+        for block in self.body:
+            x = block(x)
+        pred = self.classifier(torch.reshape(x, (x.shape[0], -1)))
+        return pred
+    
+    def _compute_input_features(self, x):
+        if self.prog_growth:
+            if self.has_unfused_new_block:
+                x_main = self.from_rgb(x)
+                x_main = self.new_block(x_main)                
+                x_skip = F.interpolate(x, size=(x.shape[2] // 2, x.shape[3] // 2), mode='nearest')
+                x_skip = self.from_rgb_skip(x_skip)
+                x = (1 - self.alpha) * x_skip + self.alpha * x_main
+            else:
+                x = self.from_rgb(x)
+        else:
+            x = self.from_rgb(x)
+        return x
+    
+    def grow_new_block(self):
+
+        # Grow a new block at 2x res
+        in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
+        self.new_block = DiscriminatorBlock(in_channels, out_channels, device=self.device)
+
+        # Replace current fromRGB layer with 2x res one
+        self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=device)
+        
+        # Add a 2x res fromRGB skip layer
+        self.from_rgb_skip = Conv2d(3, out_channels, kernel_size=1, device=device)
+        
+        # Flag
+        self.has_unfused_new_block = True
+    
+    def fuse_new_block(self):
+        
+        # Fuse into the body
+        self.body.insert(0, self.new_block)
+        
+        # Cleanup
+        self.new_block = None
+        self.to_rgb_skip = None
+        self.alpha = None
+        
+        # Flag
+        self.has_unfused_new_block = False
+    
+    
+
+class DiscriminatorBlock(nn.Module):
+
+    def __init__(self, in_channels, out_channels, is_last_block=False, device='cpu'):
+
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        if is_last_block:
+            layers = [
+                MinibatchSDLayer(),
+                Conv2d(in_channels + 1, in_channels, kernel_size=3, padding=1, padding_mode='reflect'),
+                nn.LeakyReLU(0.2),
+                Conv2d(in_channels, out_channels, kernel_size=4),
+                nn.LeakyReLU(0.2)
+            ]            
+        else:
+            layers= [
+                Conv2d(in_channels, in_channels, kernel_size=3, padding=1, padding_mode='reflect'),
                 nn.LeakyReLU(0.2),
                 Conv2d(in_channels, out_channels, kernel_size=3, padding=1, padding_mode='reflect'),
                 nn.LeakyReLU(0.2),
-                Conv2d(in_channels, in_channels, kernel_size=3, padding=1, padding_mode='reflect')
-                ])
+                nn.AvgPool2d(kernel_size=2, stride=2)  # TODO: check which subsampling op used in paper
+                ]
 
-        backbone_layers.append(Conv2d(3, in_channels, kernel_size=1))  # From RGB
-
-        backbone_layers = backbone_layers[::-1]
-        self.backbone = nn.Sequential(*backbone_layers).to(device)
-
-        classifier_layers = [
-            Conv2d(max_channels + 1, max_channels, kernel_size=3, padding=1, padding_mode='reflect'),
-            nn.LeakyReLU(0.2),
-            Conv2d(max_channels, max_channels, kernel_size=4),
-            nn.LeakyReLU(0.2),
-            Conv2d(max_channels, 1, kernel_size=1)  # Linear layer implemented as 1x1 conv2d
-            ]
-        self.classifier = nn.Sequential(*classifier_layers).to(device)
-    
-    def double_working_resolution(self, num_blending_iters):
-        self.working_resolution *= 2
-        self.alpha_schedule = torch.linspace(0, 1, num_blending_iters)
-        # Discard current from RGB layer
-        # Add new block TODO
-        # Add 2 new fromRGB layers TODO
+        self.block = nn.Sequential(*layers).to(device)
 
     def forward(self, x):
-        features = self.backbone(x)
-        features = self.minibatch_stddev_layer(features)
-        pred = self.classifier(features).squeeze(-1).squeeze(-1)
-        return pred
-    
-    def minibatch_stddev_layer(self, features):
-        std_map = torch.full(
-            (features.shape[0], 1, features.shape[2], features.shape[3]), 
-            fill_value=float(torch.std(features, dim=0, unbiased=False).mean()), 
-            device=features.device
-            )
-        features = torch.cat([features, std_map], dim=1)
-        return features
-    
+        return self.block(x)
+
 
 
 # ---
-# Layers with custom initialization
+# Custom layers and layers with custom initialization
 
 class Linear(nn.Linear):
     def __init__(self, bias_init_val, *args, **kwargs):
@@ -209,6 +323,19 @@ class Conv2d(nn.Conv2d):
         self.weight = nn.init.normal_(self.weight)
         self.bias = nn.init.constant_(self.bias, val=0.0)
 
+class MinibatchSDLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, x):
+        std_map = torch.full(
+            (x.shape[0], 1, x.shape[2], x.shape[3]), 
+            fill_value=float(torch.std(x, dim=0, unbiased=False).mean()), 
+            device=x.device
+            )
+        x = torch.cat([x, std_map], dim=1)
+        return x
+
 
 
 # ---
@@ -216,21 +343,57 @@ class Conv2d(nn.Conv2d):
 if __name__ == '__main__':
     
     device = 'cuda'
-    final_resolution = 1024
-    prog_growth = False
+    final_resolution = 4
+    prog_growth = True
     batch_size = 1
 
-    gen = Generator(final_resolution, prog_growth, device)
-    dis = Discriminator(final_resolution, prog_growth, device)
+    # Test G
+    # gen = Generator(final_resolution, prog_growth, device)
     print("init")
 
-    z = torch.zeros((batch_size, LATENT_DIM), device=device)
-    x_fake = gen(z)
-    # print(x_fake)
+    # z = torch.zeros((batch_size, LATENT_DIM), device=device)
+    # x_fake = gen(z)
     # print(x_fake.shape)
-    # print(dis(x_fake))
 
+    # gen.synthesis_net.grow_new_block()
+    # gen.synthesis_net.alpha = 0.5
+    # x_fake = gen(z)
+    # print(x_fake.shape)
+    # gen.synthesis_net.fuse_new_block()
+    # x_fake = gen(z)
+    # print(x_fake.shape)
+    
+    # gen.synthesis_net.grow_new_block()
+    # gen.synthesis_net.alpha = 0.5
+    # x_fake = gen(z)
+    # print(x_fake.shape)
+    # gen.synthesis_net.fuse_new_block()
+    # x_fake = gen(z)
+    # print(x_fake.shape)
+
+
+    # Test D
+    dis = Discriminator(final_resolution, prog_growth, device)
+    print("init")
     x_real = torch.zeros((batch_size, 3, final_resolution, final_resolution), device=device)
     pred = dis(x_real)
-    # print(pred.shape)
-    print(pred)
+    # # print(pred.shape)
+    # print(pred)
+
+    dis.grow_new_block()
+    dis.alpha = 0.5
+    x_real = F.interpolate(x_real, scale_factor=2)
+    pred = dis(x_real)
+    print(pred.shape)
+    dis.fuse_new_block()
+    pred = dis(x_real)
+    print(pred.shape)
+
+    dis.grow_new_block()
+    dis.alpha = 0.5
+    x_real = F.interpolate(x_real, scale_factor=2)
+    pred = dis(x_real)
+    print(pred.shape)
+    dis.fuse_new_block()
+    pred = dis(x_real)
+    print(pred.shape)

@@ -4,6 +4,8 @@ import numpy as np
 import PIL
 
 
+DATASET_RESOLUTION = 128
+
 
 class FFHQ128x128Dataset(Dataset):
     """
@@ -14,8 +16,8 @@ class FFHQ128x128Dataset(Dataset):
         self.root = root
         self.split = split
         self.prog_growth = prog_growth
-        if prog_growth: self.working_resolution = 4
-        else:           self.working_resolution = 128
+        if prog_growth: self.output_resolution = 8
+        else:           self.output_resolution = DATASET_RESOLUTION
     
     def __len__(self):
         if self.split == 'train':  return 60000
@@ -28,7 +30,7 @@ class FFHQ128x128Dataset(Dataset):
         image = PIL.Image.open(path)
         
         # TODO: rescale
-        if self.working_resolution < 128:
+        if self.output_resolution < 128:
             pass
 
         image = np.asarray(image) / 255.
@@ -36,8 +38,8 @@ class FFHQ128x128Dataset(Dataset):
         image = torch.tensor(image, dtype=torch.float).permute(2,0,1)        
         return {'image': image}
 
-    def double_working_resolution(self):
-        self.working_resolution *= 2
+    def double_output_resolution(self):
+        self.output_resolution *= 2
 
 
 

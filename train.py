@@ -13,15 +13,56 @@ from utils.losses import nsgan_criterion
 
 
 def log_to_dashboard(loss_g, loss_d, fake, iter_counter):
-    samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1,1)).permute((1,2,0)).numpy()
-    log_dict = {
-        'Loss: G': float(loss_g.detach().cpu()), 
-        'Loss: D': float(loss_d.detach().cpu()),
-        'Samples': [wandb.Image(samples_grid)]
-        }
-    wandb.log(log_dict, step=iter_counter)
+    if iter_counter % config.log_freq == 0:
+        samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1,1)).permute((1,2,0)).numpy()
+        log_dict = {
+            'Loss: G': float(loss_g.detach().cpu()), 
+            'Loss: D': float(loss_d.detach().cpu()),
+            'Samples': [wandb.Image(samples_grid)]
+            }
+        wandb.log(log_dict, step=iter_counter)
 
 
+def grow_model(generator, discriminator, dataset, iter_counter):
+
+    def iter_at_start_of_growth_cycle(iter_counter):
+        return iter_counter % config.num_iters_growth_cycle == 0
+    
+    def iter_in_fading_phase(iter_counter):
+        return (iter_counter // config.num_iters_growth_cycle) % 2 != 0
+        
+    # If already at max resolution, return
+    if discriminator.output_resolution == FFHQ128x128Dataset.DATASET_RESOLUTION:
+        return
+        
+    # If at a growth iter, grow
+    if iter_at_start_of_growth_cycle(iter_counter):
+
+        # If at the start of the fading-in phase, grow blocks and set alpha=0
+        if iter_in_fading_phase(iter_counter):
+
+            generator.synthesis_net.grow_new_block()
+            discriminator.grow_new_block()
+
+            generator.synthesis_net.alpha = 0
+            discriminator.alpha = 0
+
+            dataset.double_output_resolution()
+
+        # If at the start of the stabilization phase, fuse blocks into net body
+        else:
+            generator.synthesis_net.fuse_grown_block()
+            discriminator.fuse_grown_block()
+
+    # If inside a fading-in phase, update alpha
+    elif iter_in_fading_phase(iter_counter):
+        prev_growth_iter = (iter_counter // config.num_iters_growth_cycle) * config.num_iters_growth_cycle
+        alpha = (iter_counter - prev_growth_iter) / config.num_iters_growth_cycle
+        generator.synthesis_net.alpha = alpha
+        discriminator.alpha = alpha
+
+
+    
 def main():
     
     # Data
@@ -41,7 +82,7 @@ def main():
     wandb.init(project=config.wandb_project, name=config.wandb_run_name)
     
     # Training loop
-    for iter_counter in tqdm(range(config.num_iters)):        
+    for iter_counter in range(1, config.num_iters + 1):
 
         # Update G
         opt_g.zero_grad(set_to_none=True)
@@ -61,15 +102,12 @@ def main():
         loss_d.backward()
         opt_d.step()
 
-        # Progressive growth TODO: implement
-        growth_signal = iter_counter / config.num_iters
-        dataset.set_growth_signal(growth_signal)
-        generator.synthesis_net.set_growth_signal(growth_signal)
-        discriminator.set_growth_signal(growth_signal)
+        # Progressive growth
+        if config.prog_growth:
+            grow_model(None, None, None, iter_counter)
 
         # Log
-        if iter_counter % config.log_freq == 0:
-            log_to_dashboard(loss_g, loss_d, fake, iter_counter)
+        log_to_dashboard(loss_g, loss_d, fake, iter_counter)
 
 
 # ---
