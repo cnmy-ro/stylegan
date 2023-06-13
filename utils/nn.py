@@ -5,12 +5,18 @@ import numpy as np
 
 
 
+# ---
+# Constants
+
 LATENT_DIM = 512
 MAPPING_NET_DEPTH = 8
 MAX_CHANNELS = 512
-MIN_OUTPUT_RESOLUTION = 8   # During progressive growing
+MIN_OUTPUT_RESOLUTION = 8   # Used during progressive growing
 
 
+
+# ---
+# Networks
 
 class Generator(nn.Module):
 
@@ -21,7 +27,7 @@ class Generator(nn.Module):
         self.synthesis_net = SynthesisNetwork(final_resolution, prog_growth, device)
         
     def forward(self, z):
-        z = z / (z**2 + 1e-8).sum().sqrt()
+        z = z / (z.square().mean() + 1e-8).sqrt()
         w = self.mapping_net(z)
         x = self.synthesis_net(w)
         return x
@@ -106,10 +112,10 @@ class SynthesisNetwork(nn.Module):
         self.new_block = SynthesisNetworkBlock(in_channels, out_channels, device=self.device)
 
         # Replace current toRGB layer with 2x res one
-        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1, device=device)
+        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1, device=self.device)
         
         # Add a 2x res toRGB skip layer
-        self.to_rgb_skip = Conv2d(in_channels, 3, kernel_size=1, device=device)
+        self.to_rgb_skip = Conv2d(in_channels, 3, kernel_size=1, device=self.device)
         
         # Flag
         self.has_unfused_new_block = True
@@ -254,10 +260,10 @@ class Discriminator(nn.Module):
         self.new_block = DiscriminatorBlock(in_channels, out_channels, device=self.device)
 
         # Replace current fromRGB layer with 2x res one
-        self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=device)
+        self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=self.device)
         
         # Add a 2x res fromRGB skip layer
-        self.from_rgb_skip = Conv2d(3, out_channels, kernel_size=1, device=device)
+        self.from_rgb_skip = Conv2d(3, out_channels, kernel_size=1, device=self.device)
         
         # Flag
         self.has_unfused_new_block = True
@@ -274,7 +280,6 @@ class Discriminator(nn.Module):
         
         # Flag
         self.has_unfused_new_block = False
-    
     
 
 class DiscriminatorBlock(nn.Module):
@@ -327,6 +332,7 @@ class Linear(nn.Module):
         b = self.bias * self.bias_gain
         return F.linear(x, w, b)
 
+
 class Conv2d(nn.Module):
 
     def __init__(self, in_channels, out_channels, kernel_size, padding=0, padding_mode='reflect', device='cpu'):
@@ -343,6 +349,7 @@ class Conv2d(nn.Module):
         x = F.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode)
         return F.conv2d(x, w, b)
 
+
 class Resample(nn.Module):
 
     def __init__(self, scale_factor):
@@ -351,6 +358,7 @@ class Resample(nn.Module):
     
     def forward(self, x):
         return F.interpolate(x, size=(int(x.shape[2] * self.scale_factor), int(x.shape[3] * self.scale_factor)), mode='nearest') 
+
 
 class MinibatchSDLayer(nn.Module):
 
@@ -372,7 +380,7 @@ if __name__ == '__main__':
     device = 'cuda'
     final_resolution = 8
     prog_growth = True
-    batch_size = 1
+    batch_size = 2
 
     # Test G
     # gen = Generator(final_resolution, prog_growth, device)

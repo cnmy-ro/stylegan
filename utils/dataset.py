@@ -7,6 +7,7 @@ import PIL
 
 
 DATASET_RESOLUTION = 128
+MIN_OUTPUT_RESOLUTION = 8   # Used during progressive growing
 
 
 
@@ -19,7 +20,7 @@ class FFHQ128x128Dataset(Dataset):
         self.root = root
         self.split = split
         self.prog_growth = prog_growth
-        if prog_growth: self.output_resolution = 8
+        if prog_growth: self.output_resolution = MIN_OUTPUT_RESOLUTION
         else:           self.output_resolution = DATASET_RESOLUTION
     
     def __len__(self):
@@ -33,12 +34,12 @@ class FFHQ128x128Dataset(Dataset):
         path = f"{self.root}/thumbnails128x128/{subdir}/{str(idx).zfill(5)}.png"
         image = PIL.Image.open(path)
 
-        image = np.asarray(image) / 255.
-        image = image * 2 - 1
-        
-        image = torch.tensor(image, dtype=torch.float).permute(2,0,1)        
         if self.output_resolution < 128:
-            image = F.interpolate(image, size=self.output_resolution, mode='bicubic')
+            image = image.resize((self.output_resolution, self.output_resolution), PIL.Image.BOX)
+
+        image = np.asarray(image) / 255.
+        image = image * 2 - 1  
+        image = torch.tensor(image, dtype=torch.float).permute(2,0,1)
 
         return {'image': image}
 

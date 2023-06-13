@@ -6,14 +6,15 @@ import wandb
 from tqdm import tqdm
 
 import config
-from utils.nn import Generator, Discriminator, LATENT_DIM
-from utils.dataset import FFHQ128x128Dataset, InfiniteSampler
+from utils.nn import Generator, Discriminator, LATENT_DIM, MIN_OUTPUT_RESOLUTION
+from utils.dataset import FFHQ128x128Dataset, InfiniteSampler, DATASET_RESOLUTION
 from utils.losses import nsgan_criterion
 
 
 
-def log_to_dashboard(loss_g, loss_d, fake, iter_counter):
+def log_to_dashboard(loss_g, loss_d, fake, iter_counter, max_samples=32):
     if iter_counter % config.log_freq == 0:
+        if fake.shape[0] > max_samples:  fake = fake[:max_samples]
         samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1,1)).permute((1,2,0)).numpy()
         log_dict = {
             'Loss: G': float(loss_g.detach().cpu()), 
@@ -23,7 +24,7 @@ def log_to_dashboard(loss_g, loss_d, fake, iter_counter):
         wandb.log(log_dict, step=iter_counter)
 
 
-def grow_model(generator, discriminator, dataset, iter_counter):
+def grow_model(generator, discriminator, dataloader, iter_counter):
 
     def iter_at_start_of_growth_cycle(iter_counter):
         return iter_counter % config.num_iters_growth_cycle == 0
@@ -32,8 +33,8 @@ def grow_model(generator, discriminator, dataset, iter_counter):
         return (iter_counter // config.num_iters_growth_cycle) % 2 != 0
         
     # If already at max resolution, return
-    if discriminator.output_resolution == FFHQ128x128Dataset.DATASET_RESOLUTION:
-        return
+    if dataloader.dataset.output_resolution == DATASET_RESOLUTION:
+        return generator, discriminator, dataloader
         
     # If at a growth iter, grow
     if iter_at_start_of_growth_cycle(iter_counter):
@@ -46,8 +47,9 @@ def grow_model(generator, discriminator, dataset, iter_counter):
 
             generator.synthesis_net.alpha = 0
             discriminator.alpha = 0
-
-            dataset.double_output_resolution()
+            
+            dataloader = DataLoader(dataloader.dataset, batch_size=dataloader.batch_size//2, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
+            dataloader.dataset.double_output_resolution()
 
         # If at the start of the stabilization phase, fuse blocks into net body
         else:
@@ -61,14 +63,16 @@ def grow_model(generator, discriminator, dataset, iter_counter):
         generator.synthesis_net.alpha = alpha
         discriminator.alpha = alpha
 
-
+    return generator, discriminator, dataloader
     
 def main():
     
     # Data
     dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
     sampler = InfiniteSampler(dataset_size=len(dataset), shuffle=True)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, sampler=sampler)
+    if config.prog_growth: init_batch_size = min(config.final_batch_size * (DATASET_RESOLUTION // MIN_OUTPUT_RESOLUTION), 128)
+    else:                  init_batch_size = config.final_batch_size
+    dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=4)
     
     # Model
     generator = Generator(config.final_resolution, config.prog_growth, config.device)
@@ -82,12 +86,12 @@ def main():
     wandb.init(project=config.project, name=config.run_name)
     
     # Training loop
-    for iter_counter in range(1, config.num_iters + 1):
+    for iter_counter in tqdm(range(1, config.num_iters + 1)):
 
         # Update G
         opt_g.zero_grad(set_to_none=True)
         for p in discriminator.parameters(): p.requires_grad = False
-        latent = torch.randn((config.batch_size, LATENT_DIM), device=config.device)
+        latent = torch.randn((dataloader.batch_size, LATENT_DIM), device=config.device)
         fake = generator(latent)
         loss_g = nsgan_criterion(discriminator(fake), is_real=True)
         loss_g.backward()
@@ -102,9 +106,9 @@ def main():
         loss_d.backward()
         opt_d.step()
 
-        # Progressive growth
+        # Progressive growing
         if config.prog_growth:
-            grow_model(None, None, None, iter_counter)
+            generator, discriminator, dataloader = grow_model(generator, discriminator, dataloader, iter_counter)
 
         # Log
         log_to_dashboard(loss_g, loss_d, fake, iter_counter)

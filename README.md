@@ -9,6 +9,7 @@ To implement:
 - [x] Equalized learning rate
 - [x] 1% reduced learning rate for mapping_net compared to synthesis_net
 - [x] Progressive growing
+- [ ] R1 loss penalty
 - [ ] Style mixing regularization
 - [ ] Truncation trick regularization
 - [ ] Sampling demo notebook: `notebooks/Sampling.ipynb`
