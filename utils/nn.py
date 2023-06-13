@@ -141,7 +141,7 @@ class SynthesisNetworkBlock(nn.Module):
 
         # 1st conv block
         if not is_first_block:
-            self.layers.append(nn.Upsample(scale_factor=2, mode='nearest')) 
+            self.layers.append(Resample(scale_factor=2)) 
             self.layers.append(Conv2d(in_channels, out_channels, kernel_size=3, padding=1, padding_mode='reflect', device=device))
         self.layers.extend([
             NoiseLayer(out_channels, device),
@@ -289,18 +289,18 @@ class DiscriminatorBlock(nn.Module):
         if is_last_block:
             layers = [
                 MinibatchSDLayer(),
-                Conv2d(in_channels + 1, in_channels, kernel_size=3, padding=1, padding_mode='reflect'),
+                Conv2d(in_channels + 1, in_channels, kernel_size=3, padding=1),
                 nn.LeakyReLU(0.2),
                 Conv2d(in_channels, out_channels, kernel_size=4),
                 nn.LeakyReLU(0.2)
             ]
         else:
             layers= [
-                Conv2d(in_channels, in_channels, kernel_size=3, padding=1, padding_mode='reflect'),
+                Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
                 nn.LeakyReLU(0.2),
-                Conv2d(in_channels, out_channels, kernel_size=3, padding=1, padding_mode='reflect'),
+                Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
                 nn.LeakyReLU(0.2),
-                nn.AvgPool2d(kernel_size=2, stride=2)  # TODO: check which subsampling op used in paper
+                Resample(scale_factor=0.5)
                 ]
 
         self.block = nn.Sequential(*layers).to(device)
@@ -329,11 +329,11 @@ class Linear(nn.Module):
 
 class Conv2d(nn.Module):
 
-    def __init__(self, in_channels, out_channels, kernel_size, padding=0, padding_mode='constant', device='cpu'):
+    def __init__(self, in_channels, out_channels, kernel_size, padding=0, padding_mode='reflect', device='cpu'):
         super().__init__()        
         self.weight = nn.parameter.Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size], device=device))
         self.bias = nn.parameter.Parameter(torch.full([out_channels], fill_value=0.0, device=device))
-        self.weight_gain = np.sqrt(2) / np.sqrt(in_channels * kernel_size**2)   # For learning rate equalization
+        self.weight_gain = np.sqrt(2) / np.sqrt(in_channels * kernel_size ** 2)   # For learning rate equalization
         self.padding = padding
         self.padding_mode = padding_mode
 
@@ -343,15 +343,24 @@ class Conv2d(nn.Module):
         x = F.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode)
         return F.conv2d(x, w, b)
 
+class Resample(nn.Module):
+
+    def __init__(self, scale_factor):
+        super().__init__()
+        self.scale_factor = scale_factor
+    
+    def forward(self, x):
+        return F.interpolate(x, size=(int(x.shape[2] * self.scale_factor), int(x.shape[3] * self.scale_factor)), mode='nearest') 
+
 class MinibatchSDLayer(nn.Module):
 
     def __init__(self):
         super().__init__()
     
     def forward(self, x):
-        std = torch.mean(torch.sqrt(torch.var(x, dim=0, unbiased=False) + 1e-8))
-        std_map = torch.full((x.shape[0], 1, x.shape[2], x.shape[3]), fill_value=float(std), device=x.device)
-        x = torch.cat([x, std_map], dim=1)
+        sd = torch.mean(torch.sqrt(torch.var(x, dim=0, unbiased=False) + 1e-8))
+        sd_map = torch.full((x.shape[0], 1, x.shape[2], x.shape[3]), fill_value=float(sd), device=x.device)
+        x = torch.cat([x, sd_map], dim=1)
         return x
 
 
