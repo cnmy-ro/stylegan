@@ -58,9 +58,8 @@ def grow_model(generator, discriminator, dataloader, iter_counter):
 
     def calc_alpha():
         num_images_processed = iter_counter * dataloader.batch_size
-        prev_growth_milestone_num_images = (num_images_processed // config.num_images_per_growth_half_cycle) * config.num_images_per_growth_half_cycle
-        prev_growth_milestone_iter = prev_growth_milestone_num_images // dataloader.batch_size
-        alpha = (iter_counter - prev_growth_milestone_iter) / config.num_images_per_growth_half_cycle
+        prev_growth_milestone = (num_images_processed // config.num_images_per_growth_half_cycle) * config.num_images_per_growth_half_cycle        
+        alpha = (num_images_processed - prev_growth_milestone) / config.num_images_per_growth_half_cycle        
         return alpha
         
     # If already at max resolution, return
@@ -103,7 +102,7 @@ def main():
     dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth, config.lores_caching, config.training_output_dir)
     sampler = InfiniteSampler(dataset_size=len(dataset))
     if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING[MIN_WORKING_RESOLUTION]
-    else:                  init_batch_size = config.final_batch_size
+    else:                  init_batch_size = config.fixed_batch_size
     dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=1)
     
     # Model
