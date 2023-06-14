@@ -6,13 +6,13 @@ import wandb
 from tqdm import tqdm
 
 import config
-from utils.nn import Generator, Discriminator, LATENT_DIM, MIN_OUTPUT_RESOLUTION
+from utils.nn import Generator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
 from utils.dataset import FFHQ128x128Dataset, InfiniteSampler, DATASET_RESOLUTION
 from utils.losses import nsgan_criterion
 
 
 
-def log_to_dashboard(loss_g, loss_d, fake, iter_counter, max_samples=32):
+def log_to_dashboard(loss_g, loss_d, fake, iter_counter, max_samples=16):
     if iter_counter % config.log_freq == 0:
         if fake.shape[0] > max_samples:  fake = fake[:max_samples]
         samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1, 1)).permute((1, 2, 0)).numpy()
@@ -26,42 +26,41 @@ def log_to_dashboard(loss_g, loss_d, fake, iter_counter, max_samples=32):
 
 def grow_model(generator, discriminator, dataloader, iter_counter):
 
-    def iter_at_start_of_growth_cycle(iter_counter):
-        return iter_counter % config.num_iters_growth_cycle == 0
+    def iter_at_start_of_growth_half_cycle():
+        num_images_processed = iter_counter * dataloader.batch_size
+        return num_images_processed % config.num_images_per_growth_half_cycle == 0
     
-    def iter_in_fading_phase(iter_counter):
-        return (iter_counter // config.num_iters_growth_cycle) % 2 != 0
+    def iter_in_fading_phase():
+        num_images_processed = iter_counter * dataloader.batch_size
+        return (num_images_processed // config.num_images_per_growth_half_cycle) % 2 != 0
         
     # If already at max resolution, return
-    if dataloader.dataset.output_resolution == DATASET_RESOLUTION:
+    if dataloader.dataset.working_resolution == DATASET_RESOLUTION:
         return generator, discriminator, dataloader
         
-    # If at a growth iter, grow
-    if iter_at_start_of_growth_cycle(iter_counter):
+    # If at the start of a growth half-cycle, handle growth
+    if iter_at_start_of_growth_half_cycle():
 
-        # If at the start of the fading-in phase, grow blocks and set alpha=0
-        if iter_in_fading_phase(iter_counter):
+        # If this is the start fading-in phase, double the resolution and grow new block
+        if iter_in_fading_phase():
 
             generator.synthesis_net.grow_new_block()
             discriminator.grow_new_block()
 
-            generator.synthesis_net.alpha = 0
-            discriminator.alpha = 0
-            
             dataloader = DataLoader(dataloader.dataset, batch_size=dataloader.batch_size // 2, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
-            dataloader.dataset.double_output_resolution()
+            dataloader.dataset.double_working_resolution()
 
-        # If at the start of the stabilization phase, fuse blocks into net body
+        # If this is the start stabilization phase, fuse the block into net body
         else:
-            generator.synthesis_net.fuse_grown_block()
-            discriminator.fuse_grown_block()
+            generator.synthesis_net.fuse_new_block()
+            discriminator.fuse_new_block()
 
     # If inside a fading-in phase, update alpha
-    elif iter_in_fading_phase(iter_counter):
+    elif iter_in_fading_phase():
         prev_growth_iter = (iter_counter // config.num_iters_growth_cycle) * config.num_iters_growth_cycle
         alpha = (iter_counter - prev_growth_iter) / config.num_iters_growth_cycle
-        generator.synthesis_net.alpha = alpha
-        discriminator.alpha = alpha
+        generator.synthesis_net.set_alpha(alpha)
+        discriminator.set_alpha(alpha)
 
     return generator, discriminator, dataloader
     
@@ -70,7 +69,7 @@ def main():
     # Data
     dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
     sampler = InfiniteSampler(dataset_size=len(dataset))
-    if config.prog_growth: init_batch_size = min(config.final_batch_size * (DATASET_RESOLUTION // MIN_OUTPUT_RESOLUTION), 128)
+    if config.prog_growth: init_batch_size = min(config.final_batch_size * (DATASET_RESOLUTION // MIN_WORKING_RESOLUTION) ** 2, 128)
     else:                  init_batch_size = config.final_batch_size
     dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=4)
     

@@ -12,7 +12,7 @@ import numpy as np
 LATENT_DIM = 512
 MAPPING_NET_DEPTH = 8
 MAX_CHANNELS = 512
-MIN_OUTPUT_RESOLUTION = 8   # Used during progressive growing
+MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
 
 
 
@@ -62,15 +62,15 @@ class SynthesisNetwork(nn.Module):
         
         self.prog_growth = prog_growth
         if prog_growth:
-            output_resolution = MIN_OUTPUT_RESOLUTION
+            working_resolution = MIN_WORKING_RESOLUTION
             self.has_unfused_new_block = False
             self.new_block = None
             self.to_rgb_skip = None
             self.alpha = None            
         else:
-            output_resolution = final_resolution
+            working_resolution = final_resolution
         
-        resolutions = [2**i for i in range(2, 12) if 2**i <= output_resolution]
+        resolutions = [2**i for i in range(2, 12) if 2**i <= working_resolution]
         
         # Network body
         self.body = [SynthesisNetworkBlock(MAX_CHANNELS, MAX_CHANNELS, is_first_block=True, device=device)]
@@ -106,6 +106,9 @@ class SynthesisNetwork(nn.Module):
             x = self.to_rgb(x)
         return x
     
+    def set_alpha(self, alpha):
+        self.alpha = alpha
+
     def grow_new_block(self):
 
         # Grow a new block at 2x res
@@ -118,7 +121,10 @@ class SynthesisNetwork(nn.Module):
         # Add a 2x res toRGB skip layer
         self.to_rgb_skip = Conv2d(in_channels, 3, kernel_size=1, device=self.device)
         
-        # Flag
+        # Reset alpha
+        self.alpha = 0
+
+        # Set flag
         self.has_unfused_new_block = True
     
     def fuse_new_block(self):
@@ -131,7 +137,7 @@ class SynthesisNetwork(nn.Module):
         self.to_rgb_skip = None
         self.alpha = None
         
-        # Flag
+        # Clear flag
         self.has_unfused_new_block = False
 
 
@@ -187,16 +193,16 @@ class AdaINLayer(nn.Module):
     
     def __init__(self, num_channels, device):
         super().__init__()
-        self.affine_layer_s = Linear(LATENT_DIM, num_channels, bias_init=1.0, device=device)
-        self.affine_layer_b = Linear(LATENT_DIM, num_channels, bias_init=0.0, device=device)
+        self.affine_scale = Linear(LATENT_DIM, num_channels, bias_init=1.0, device=device)
+        self.affine_bias = Linear(LATENT_DIM, num_channels, bias_init=0.0, device=device)
         self.eps = 1e-5
 
     def forward(self, x, w):
-        style_s = self.affine_layer_s(w).unsqueeze(-1).unsqueeze(-1)
-        style_b = self.affine_layer_b(w).unsqueeze(-1).unsqueeze(-1)
+        style_scale = self.affine_scale(w).unsqueeze(-1).unsqueeze(-1)
+        style_bias = self.affine_bias(w).unsqueeze(-1).unsqueeze(-1)
         mean = x.mean(dim=[-1, -2], keepdims=True)
         var = x.var(dim=[-1, -2], keepdims=True, unbiased=False) + self.eps
-        x = style_s * ((x - mean) / var.sqrt()) + style_b
+        x = style_scale * ((x - mean) / var.sqrt()) + style_bias
         return x
 
 
@@ -210,15 +216,15 @@ class Discriminator(nn.Module):
 
         self.prog_growth = prog_growth
         if prog_growth:
-            output_resolution = MIN_OUTPUT_RESOLUTION
+            working_resolution = MIN_WORKING_RESOLUTION
             self.has_unfused_new_block = False
             self.new_block = None
             self.to_rgb_skip = None
             self.alpha = None   
         else:
-            output_resolution = final_resolution
+            working_resolution = final_resolution
 
-        resolutions = [2**i for i in range(2, 12) if 2**i <= output_resolution]
+        resolutions = [2**i for i in range(2, 12) if 2**i <= working_resolution]
         
         # Network body
         self.body = [DiscriminatorBlock(MAX_CHANNELS, MAX_CHANNELS, is_last_block=True, device=device)]  # Last block, corresponding to lowest res (4x4)
@@ -255,6 +261,9 @@ class Discriminator(nn.Module):
             x = self.from_rgb(x)
         return x
     
+    def set_alpha(self, alpha):
+        self.alpha = alpha
+
     def grow_new_block(self):
 
         # Grow a new block at 2x res
@@ -266,8 +275,11 @@ class Discriminator(nn.Module):
         
         # Add a 2x res fromRGB skip layer
         self.from_rgb_skip = Conv2d(3, out_channels, kernel_size=1, device=self.device)
+
+        # Reset alpha
+        self.alpha = 0
         
-        # Flag
+        # Set flag
         self.has_unfused_new_block = True
     
     def fuse_new_block(self):
@@ -280,7 +292,7 @@ class Discriminator(nn.Module):
         self.to_rgb_skip = None
         self.alpha = None
         
-        # Flag
+        # Clear flag
         self.has_unfused_new_block = False
     
 
@@ -324,15 +336,15 @@ class Linear(nn.Module):
 
     def __init__(self, in_features, out_features, bias_init, lr_multiplier=1.0, device='cpu'):
         super().__init__()
-        self.weight = Parameter(torch.randn([out_features, in_features], device=device))
+        self.weight = Parameter(torch.randn([out_features, in_features], device=device) / lr_multiplier)
         self.bias = Parameter(torch.full([out_features], fill_value=bias_init, device=device))
         self.weight_gain = lr_multiplier * (np.sqrt(2) / np.sqrt(in_features))  # For learning rate equalization
         self.bias_gain = lr_multiplier                                          #
     
     def forward(self, x):
-        w = self.weight * self.weight_gain
-        b = self.bias * self.bias_gain
-        return F.linear(x, w, b)
+        weight = self.weight * self.weight_gain
+        bias = self.bias * self.bias_gain
+        return F.linear(x, weight, bias)
 
 
 class Conv2d(nn.Module):
@@ -346,10 +358,10 @@ class Conv2d(nn.Module):
         self.padding_mode = padding_mode
 
     def forward(self, x):
-        w = self.weight * self.weight_gain
-        b = self.bias
-        x = F.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode)
-        return F.conv2d(x, w, b)
+        weight = self.weight * self.weight_gain
+        bias = self.bias
+        x = F.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode)        
+        return F.conv2d(x, weight, bias)        
 
 
 class Resample(nn.Module):
@@ -380,56 +392,56 @@ class MinibatchSDLayer(nn.Module):
 if __name__ == '__main__':
     
     device = 'cuda'
-    final_resolution = 8
-    prog_growth = True
+    final_resolution = 1024
+    prog_growth = False
     batch_size = 2
 
     # Test G
     gen = Generator(final_resolution, prog_growth, device)
     print("init")
 
-    z = torch.zeros((batch_size, LATENT_DIM), device=device)
+    z = torch.randn((batch_size, LATENT_DIM), device=device)
     x_fake = gen(z)
     print(x_fake.shape)
 
-    gen.synthesis_net.grow_new_block()
-    gen.synthesis_net.alpha = 0.5
-    x_fake = gen(z)
-    print(x_fake.shape)
-    gen.synthesis_net.fuse_new_block()
-    x_fake = gen(z)
-    print(x_fake.shape)
+    # gen.synthesis_net.grow_new_block()
+    # gen.synthesis_net.alpha = 0.5
+    # x_fake = gen(z)
+    # print(x_fake.shape)
+    # gen.synthesis_net.fuse_new_block()
+    # x_fake = gen(z)
+    # print(x_fake.shape)
     
-    gen.synthesis_net.grow_new_block()
-    gen.synthesis_net.alpha = 0.5
-    x_fake = gen(z)
-    print(x_fake.shape)
-    gen.synthesis_net.fuse_new_block()
-    x_fake = gen(z)
-    print(x_fake.shape)
+    # gen.synthesis_net.grow_new_block()
+    # gen.synthesis_net.alpha = 0.5
+    # x_fake = gen(z)
+    # print(x_fake.shape)
+    # gen.synthesis_net.fuse_new_block()
+    # x_fake = gen(z)
+    # print(x_fake.shape)
 
 
-    # Test D
-    dis = Discriminator(final_resolution, prog_growth, device)
-    print("init")
-    x_real = torch.zeros((batch_size, 3, final_resolution, final_resolution), device=device)
-    pred = dis(x_real)
-    print(pred.shape)
+    # # Test D
+    # dis = Discriminator(final_resolution, prog_growth, device)
+    # print("init")
+    # x_real = torch.zeros((batch_size, 3, final_resolution, final_resolution), device=device)
+    # pred = dis(x_real)
+    # print(pred.shape)
 
-    dis.grow_new_block()
-    dis.alpha = 0.5
-    x_real = F.interpolate(x_real, scale_factor=2)
-    pred = dis(x_real)
-    print(pred.shape)
-    dis.fuse_new_block()
-    pred = dis(x_real)
-    print(pred.shape)
+    # dis.grow_new_block()
+    # dis.alpha = 0.5
+    # x_real = F.interpolate(x_real, scale_factor=2)
+    # pred = dis(x_real)
+    # print(pred.shape)
+    # dis.fuse_new_block()
+    # pred = dis(x_real)
+    # print(pred.shape)
 
-    dis.grow_new_block()
-    dis.alpha = 0.5
-    x_real = F.interpolate(x_real, scale_factor=2)
-    pred = dis(x_real)
-    print(pred.shape)
-    dis.fuse_new_block()
-    pred = dis(x_real)
-    print(pred.shape)
+    # dis.grow_new_block()
+    # dis.alpha = 0.5
+    # x_real = F.interpolate(x_real, scale_factor=2)
+    # pred = dis(x_real)
+    # print(pred.shape)
+    # dis.fuse_new_block()
+    # pred = dis(x_real)
+    # print(pred.shape)

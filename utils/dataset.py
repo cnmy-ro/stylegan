@@ -1,13 +1,12 @@
 import torch
 from torch.utils.data import Dataset, Sampler
-import torch.nn.functional as F
 import numpy as np
 import PIL
 
 
 
 DATASET_RESOLUTION = 128
-MIN_OUTPUT_RESOLUTION = 8   # Used during progressive growing
+MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
 
 
 
@@ -20,8 +19,8 @@ class FFHQ128x128Dataset(Dataset):
         self.root = root
         self.split = split
         self.prog_growth = prog_growth
-        if prog_growth: self.output_resolution = MIN_OUTPUT_RESOLUTION
-        else:           self.output_resolution = DATASET_RESOLUTION
+        if prog_growth: self.working_resolution = MIN_WORKING_RESOLUTION
+        else:           self.working_resolution = DATASET_RESOLUTION
     
     def __len__(self):
         if self.split == 'train':  return 60000
@@ -34,8 +33,8 @@ class FFHQ128x128Dataset(Dataset):
         path = f"{self.root}/thumbnails128x128/{subdir}/{str(idx).zfill(5)}.png"
         image = PIL.Image.open(path)
 
-        if self.output_resolution < 128:
-            image = image.resize((self.output_resolution, self.output_resolution), PIL.Image.BOX)
+        if self.working_resolution < 128:
+            image = image.resize((self.working_resolution, self.working_resolution), PIL.Image.BOX)
 
         image = np.asarray(image) / 255.
         image = image * 2 - 1  
@@ -43,8 +42,8 @@ class FFHQ128x128Dataset(Dataset):
 
         return {'image': image}
 
-    def double_output_resolution(self):
-        self.output_resolution *= 2
+    def double_working_resolution(self):
+        self.working_resolution *= 2
 
 
 
