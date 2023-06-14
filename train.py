@@ -13,24 +13,26 @@ from utils.losses import nsgan_criterion
 
 
 
-def log_to_dashboard(loss_g, loss_d, fake, iter_counter, max_samples=16):
+def log_to_dashboard(loss_g, loss_d, fake, iter_counter, image_counter, max_samples=16):
     if iter_counter % config.log_freq == 0:
         if fake.shape[0] > max_samples:  fake = fake[:max_samples]
         samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1, 1)).permute((1, 2, 0)).numpy()
         log_dict = {
-            'Loss: G': float(loss_g.detach().cpu()), 
+            'Num reals processed': image_counter,
+            'Loss: G': float(loss_g.detach().cpu()),
             'Loss: D': float(loss_d.detach().cpu()),
             'Samples': [wandb.Image(samples_grid)]
             }
         wandb.log(log_dict, step=iter_counter)
 
 
-def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter):
+def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter, image_counter):
     
     if iter_counter % config.checkpoint_freq == 0:
         
         checkpoint = {
-            'iter_counter': iter_counter, 
+            'iter_counter': iter_counter,
+            'image_counter': image_counter,
             'prog_growth': config.prog_growth, 
             'num_images_per_growth_half_cycle': config.num_images_per_growth_half_cycle,
             'net_g_state_dict': generator.state_dict(),
@@ -45,32 +47,32 @@ def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter):
         torch.save(checkpoint, path)
 
 
-def grow_model(generator, discriminator, dataloader, iter_counter):
+def grow_model(generator, discriminator, dataloader, image_counter):
 
-    def iter_at_start_of_growth_half_cycle():
-        num_images_processed = iter_counter * dataloader.batch_size
-        tol = dataloader.batch_size // 2
-        return num_images_processed % config.num_images_per_growth_half_cycle < tol
+    def at_start_of_growth_half_cycle():
+        tol = dataloader.batch_size
+        return image_counter % config.num_images_per_growth_half_cycle < tol
     
-    def iter_in_fading_phase():
-        num_images_processed = iter_counter * dataloader.batch_size
-        return (num_images_processed // config.num_images_per_growth_half_cycle) % 2 != 0
+    def in_fading_phase():
+        return (image_counter // config.num_images_per_growth_half_cycle) % 2 != 0
+    
+    def in_stabilization_phase():
+        return (image_counter // config.num_images_per_growth_half_cycle) % 2 == 0
 
     def calc_alpha():
-        num_images_processed = iter_counter * dataloader.batch_size
-        prev_growth_milestone = (num_images_processed // config.num_images_per_growth_half_cycle) * config.num_images_per_growth_half_cycle        
-        alpha = (num_images_processed - prev_growth_milestone) / config.num_images_per_growth_half_cycle        
+        prev_growth_milestone = (image_counter // config.num_images_per_growth_half_cycle) * config.num_images_per_growth_half_cycle        
+        alpha = (image_counter - prev_growth_milestone) / config.num_images_per_growth_half_cycle        
         return alpha
-        
-    # If already at max resolution, return
+
+    # If already at max resolution, do nothing and return
     if dataloader.dataset.working_resolution == DATASET_RESOLUTION:
         return generator, discriminator, dataloader
-        
+    
     # If at the start of a growth half-cycle, handle growth
-    if iter_at_start_of_growth_half_cycle():
+    if at_start_of_growth_half_cycle():
 
         # If this is the start fading-in phase, double the resolution and grow new block
-        if iter_in_fading_phase():
+        if in_fading_phase():
 
             generator.synthesis_net.grow_new_block()
             discriminator.grow_new_block()
@@ -78,17 +80,24 @@ def grow_model(generator, discriminator, dataloader, iter_counter):
             batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING[dataloader.dataset.working_resolution]
             dataloader = DataLoader(dataloader.dataset, batch_size=batch_size, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
             dataloader.dataset.double_working_resolution()
+            # print("fading phase start")
 
         # If this is the start stabilization phase, fuse the block into net body
-        else:
+        elif in_stabilization_phase():
             generator.synthesis_net.fuse_new_block()
             discriminator.fuse_new_block()
+            # print("FUSED")
 
-    # If inside a fading-in phase, update alpha
-    elif iter_in_fading_phase():
+    # If inside the fading-in phase, update alpha
+    elif in_fading_phase():
         alpha = calc_alpha()
         generator.synthesis_net.set_alpha(alpha)
         discriminator.set_alpha(alpha)
+        # print("fading...", alpha)
+
+    # If inside the stabilization phase, do nothing
+    elif in_stabilization_phase():
+        pass
 
     return generator, discriminator, dataloader
 
@@ -117,11 +126,8 @@ def main():
     wandb.init(project=config.project, name=config.run_name, dir=f"{config.training_output_dir}")
     
     # Training loop
+    image_counter = 0
     for iter_counter in tqdm(range(1, config.num_iters + 1)):
-
-        # Progressive growing
-        if config.prog_growth:
-            generator, discriminator, dataloader = grow_model(generator, discriminator, dataloader, iter_counter)
 
         # Update G
         opt_g.zero_grad(set_to_none=True)
@@ -142,10 +148,15 @@ def main():
         opt_d.step()        
 
         # Log
-        log_to_dashboard(loss_g, loss_d, fake, iter_counter)
+        image_counter += real.shape[0]
+        log_to_dashboard(loss_g, loss_d, fake, iter_counter, image_counter)
 
         # Checkpoint
-        dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter)
+        dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter, image_counter)
+
+        # Progressive growing        
+        if config.prog_growth:
+            generator, discriminator, dataloader = grow_model(generator, discriminator, dataloader, image_counter)
 
 
 # ---
