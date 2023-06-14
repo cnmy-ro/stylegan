@@ -6,8 +6,8 @@ Simple, yet fully-featured, implementation of StyleGAN in PyTorch.
 ---
 To implement:
 - [x] In `train.py`, do prog growth based on #images instead of #iters
-- [ ] Checkpointing
-- [ ] Check which loss
+- [x] Checkpointing
+- [x] Lo-res data caching
 - [x] Parameter initialization
 - [x] Equalized learning rate
 - [x] 1% reduced learning rate for mapping_net compared to synthesis_net

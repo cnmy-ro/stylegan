@@ -1,3 +1,4 @@
+from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import Adam
@@ -7,7 +8,7 @@ from tqdm import tqdm
 
 import config
 from utils.nn import Generator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
-from utils.dataset import FFHQ128x128Dataset, InfiniteSampler, DATASET_RESOLUTION
+from utils.dataset import FFHQ128x128Dataset, InfiniteSampler, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING
 from utils.losses import nsgan_criterion
 
 
@@ -24,15 +25,43 @@ def log_to_dashboard(loss_g, loss_d, fake, iter_counter, max_samples=16):
         wandb.log(log_dict, step=iter_counter)
 
 
+def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter):
+    
+    if iter_counter % config.checkpoint_freq == 0:
+        
+        checkpoint = {
+            'iter_counter': iter_counter, 
+            'prog_growth': config.prog_growth, 
+            'num_images_per_growth_half_cycle': config.num_images_per_growth_half_cycle,
+            'net_g_state_dict': generator.state_dict(),
+            'net_d_state_dict': discriminator.state_dict(),
+            'opt_g_state_dict': opt_g.state_dict(),
+            'opt_d_state_dict': opt_d.state_dict()
+            }
+        
+        checkpoint_dir = Path(f"{config.training_output_dir}/checkpoints")
+        checkpoint_dir.mkdir(exist_ok=True)
+        path = checkpoint_dir / Path(f"iter_{iter_counter}.pt")
+        torch.save(checkpoint, path)
+
+
 def grow_model(generator, discriminator, dataloader, iter_counter):
 
     def iter_at_start_of_growth_half_cycle():
         num_images_processed = iter_counter * dataloader.batch_size
-        return num_images_processed % config.num_images_per_growth_half_cycle == 0
+        tol = dataloader.batch_size // 2
+        return num_images_processed % config.num_images_per_growth_half_cycle < tol
     
     def iter_in_fading_phase():
         num_images_processed = iter_counter * dataloader.batch_size
         return (num_images_processed // config.num_images_per_growth_half_cycle) % 2 != 0
+
+    def calc_alpha():
+        num_images_processed = iter_counter * dataloader.batch_size
+        prev_growth_milestone_num_images = (num_images_processed // config.num_images_per_growth_half_cycle) * config.num_images_per_growth_half_cycle
+        prev_growth_milestone_iter = prev_growth_milestone_num_images // dataloader.batch_size
+        alpha = (iter_counter - prev_growth_milestone_iter) / config.num_images_per_growth_half_cycle
+        return alpha
         
     # If already at max resolution, return
     if dataloader.dataset.working_resolution == DATASET_RESOLUTION:
@@ -47,7 +76,8 @@ def grow_model(generator, discriminator, dataloader, iter_counter):
             generator.synthesis_net.grow_new_block()
             discriminator.grow_new_block()
 
-            dataloader = DataLoader(dataloader.dataset, batch_size=dataloader.batch_size // 2, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
+            batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING[dataloader.dataset.working_resolution]
+            dataloader = DataLoader(dataloader.dataset, batch_size=batch_size, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
             dataloader.dataset.double_working_resolution()
 
         # If this is the start stabilization phase, fuse the block into net body
@@ -57,21 +87,24 @@ def grow_model(generator, discriminator, dataloader, iter_counter):
 
     # If inside a fading-in phase, update alpha
     elif iter_in_fading_phase():
-        prev_growth_iter = (iter_counter // config.num_iters_growth_cycle) * config.num_iters_growth_cycle
-        alpha = (iter_counter - prev_growth_iter) / config.num_iters_growth_cycle
+        alpha = calc_alpha()
         generator.synthesis_net.set_alpha(alpha)
         discriminator.set_alpha(alpha)
 
     return generator, discriminator, dataloader
-    
+
+
 def main():
     
+    # Config
+    config.training_output_dir.mkdir(exist_ok=True)
+
     # Data
-    dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
+    dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth, config.lores_caching, config.training_output_dir)
     sampler = InfiniteSampler(dataset_size=len(dataset))
-    if config.prog_growth: init_batch_size = min(config.final_batch_size * (DATASET_RESOLUTION // MIN_WORKING_RESOLUTION) ** 2, 128)
+    if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING[MIN_WORKING_RESOLUTION]
     else:                  init_batch_size = config.final_batch_size
-    dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=4)
+    dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=1)
     
     # Model
     generator = Generator(config.final_resolution, config.prog_growth, config.device)
@@ -81,11 +114,15 @@ def main():
     opt_g = Adam(generator.parameters(), lr=0.001, betas=(0.0, 0.99))
     opt_d = Adam(discriminator.parameters(), lr=0.001, betas=(0.0, 0.99))    
     
-    # Dashboard
-    wandb.init(project=config.project, name=config.run_name)
+    # Dashboard    
+    wandb.init(project=config.project, name=config.run_name, dir=f"{config.training_output_dir}")
     
     # Training loop
     for iter_counter in tqdm(range(1, config.num_iters + 1)):
+
+        # Progressive growing
+        if config.prog_growth:
+            generator, discriminator, dataloader = grow_model(generator, discriminator, dataloader, iter_counter)
 
         # Update G
         opt_g.zero_grad(set_to_none=True)
@@ -103,14 +140,13 @@ def main():
         real = batch['image'].to(config.device)
         loss_d = nsgan_criterion(discriminator(real), is_real=True) + nsgan_criterion(discriminator(fake.detach()), is_real=False)
         loss_d.backward()
-        opt_d.step()
-
-        # Progressive growing
-        if config.prog_growth:
-            generator, discriminator, dataloader = grow_model(generator, discriminator, dataloader, iter_counter)
+        opt_d.step()        
 
         # Log
         log_to_dashboard(loss_g, loss_d, fake, iter_counter)
+
+        # Checkpoint
+        dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter)
 
 
 # ---
