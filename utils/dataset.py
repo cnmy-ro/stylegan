@@ -50,11 +50,9 @@ class FFHQ128x128Dataset(Dataset):
 
 class InfiniteSampler(Sampler):
     
-    def __init__(self, dataset_size, shuffle=True):
+    def __init__(self, dataset_size):
         self.dataset_size = dataset_size
-        self.shuffle = shuffle
 
     def __iter__(self):
         while True:
-            if self.shuffle: yield from torch.randperm(self.dataset_size)
-            else:            yield from torch.arange(self.dataset_size)
+            yield from torch.randperm(self.dataset_size)

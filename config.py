@@ -13,3 +13,4 @@ prog_growth = True
 num_iters_growth_cycle = 50000  # if following paper values, this will be equivalent to 800k images
 
 log_freq = 20
+checkpoint_freq = 5000

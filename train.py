@@ -15,7 +15,7 @@ from utils.losses import nsgan_criterion
 def log_to_dashboard(loss_g, loss_d, fake, iter_counter, max_samples=32):
     if iter_counter % config.log_freq == 0:
         if fake.shape[0] > max_samples:  fake = fake[:max_samples]
-        samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1,1)).permute((1,2,0)).numpy()
+        samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1, 1)).permute((1, 2, 0)).numpy()
         log_dict = {
             'Loss: G': float(loss_g.detach().cpu()), 
             'Loss: D': float(loss_d.detach().cpu()),
@@ -48,7 +48,7 @@ def grow_model(generator, discriminator, dataloader, iter_counter):
             generator.synthesis_net.alpha = 0
             discriminator.alpha = 0
             
-            dataloader = DataLoader(dataloader.dataset, batch_size=dataloader.batch_size//2, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
+            dataloader = DataLoader(dataloader.dataset, batch_size=dataloader.batch_size // 2, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
             dataloader.dataset.double_output_resolution()
 
         # If at the start of the stabilization phase, fuse blocks into net body
@@ -69,7 +69,7 @@ def main():
     
     # Data
     dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
-    sampler = InfiniteSampler(dataset_size=len(dataset), shuffle=True)
+    sampler = InfiniteSampler(dataset_size=len(dataset))
     if config.prog_growth: init_batch_size = min(config.final_batch_size * (DATASET_RESOLUTION // MIN_OUTPUT_RESOLUTION), 128)
     else:                  init_batch_size = config.final_batch_size
     dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=4)

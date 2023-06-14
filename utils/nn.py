@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.parameter import Parameter
 import numpy as np
 
 
@@ -23,7 +24,7 @@ class Generator(nn.Module):
     def __init__(self, final_resolution=256, prog_growth=False, device='cpu'):
         super().__init__()
         self.prog_growth = prog_growth
-        self.mapping_net = MappingNetwork(MAPPING_NET_DEPTH, device)
+        self.mapping_net = MappingNetwork(device)
         self.synthesis_net = SynthesisNetwork(final_resolution, prog_growth, device)
         
     def forward(self, z):
@@ -35,12 +36,12 @@ class Generator(nn.Module):
 
 class MappingNetwork(nn.Module):
 
-    def __init__(self, mapping_net_depth, device):
+    def __init__(self, device):
 
         super().__init__()
 
         layers = []
-        for _ in range(mapping_net_depth):
+        for _ in range(MAPPING_NET_DEPTH):
             layers.extend([
                 Linear(LATENT_DIM, LATENT_DIM, bias_init=0.0, lr_multiplier=0.01),
                 nn.LeakyReLU(0.2)
@@ -82,7 +83,7 @@ class SynthesisNetwork(nn.Module):
         self.to_rgb = Conv2d(out_channels, 3, kernel_size=1, device=device)
         
         # Initial lowest res (4x4) feature map
-        self.x_init = nn.parameter.Parameter(torch.ones((1, MAX_CHANNELS, 4, 4), device=device))
+        self.x_init = Parameter(torch.ones((1, MAX_CHANNELS, 4, 4), device=device))
 
     def forward(self, w):
         x = torch.repeat_interleave(self.x_init, repeats=w.shape[0], dim=0)
@@ -148,7 +149,7 @@ class SynthesisNetworkBlock(nn.Module):
         # 1st conv block
         if not is_first_block:
             self.layers.append(Resample(scale_factor=2)) 
-            self.layers.append(Conv2d(in_channels, out_channels, kernel_size=3, padding=1, padding_mode='reflect', device=device))
+            self.layers.append(Conv2d(in_channels, out_channels, kernel_size=3, padding=1, device=device))
         self.layers.extend([
             NoiseLayer(out_channels, device),
             AdaINLayer(out_channels, device),
@@ -157,7 +158,7 @@ class SynthesisNetworkBlock(nn.Module):
         
         # 2nd conv block
         self.layers.extend([
-            Conv2d(out_channels, out_channels, kernel_size=3, padding=1, padding_mode='reflect', device=device),
+            Conv2d(out_channels, out_channels, kernel_size=3, padding=1, device=device),
             NoiseLayer(out_channels, device),
             AdaINLayer(out_channels, device),
             nn.LeakyReLU(0.2)
@@ -174,7 +175,7 @@ class NoiseLayer(nn.Module):
     
     def __init__(self, num_channels, device):
         super().__init__()
-        self.scaling_factors = nn.parameter.Parameter(torch.zeros((1, num_channels, 1, 1), device=device))
+        self.scaling_factors = Parameter(torch.zeros((1, num_channels, 1, 1), device=device))
 
     def forward(self, x):
         batch_size, num_channels, height, width = x.shape
@@ -193,7 +194,8 @@ class AdaINLayer(nn.Module):
     def forward(self, x, w):
         style_s = self.affine_layer_s(w).unsqueeze(-1).unsqueeze(-1)
         style_b = self.affine_layer_b(w).unsqueeze(-1).unsqueeze(-1)
-        mean, var = x.mean(dim=[-1, -2], keepdims=True), x.var(dim=[-1, -2], keepdims=True, unbiased=False) + self.eps
+        mean = x.mean(dim=[-1, -2], keepdims=True)
+        var = x.var(dim=[-1, -2], keepdims=True, unbiased=False) + self.eps
         x = style_s * ((x - mean) / var.sqrt()) + style_b
         return x
 
@@ -322,8 +324,8 @@ class Linear(nn.Module):
 
     def __init__(self, in_features, out_features, bias_init, lr_multiplier=1.0, device='cpu'):
         super().__init__()
-        self.weight = nn.parameter.Parameter(torch.randn([out_features, in_features], device=device))
-        self.bias = nn.parameter.Parameter(torch.full([out_features], fill_value=bias_init, device=device))
+        self.weight = Parameter(torch.randn([out_features, in_features], device=device))
+        self.bias = Parameter(torch.full([out_features], fill_value=bias_init, device=device))
         self.weight_gain = lr_multiplier * (np.sqrt(2) / np.sqrt(in_features))  # For learning rate equalization
         self.bias_gain = lr_multiplier                                          #
     
@@ -337,8 +339,8 @@ class Conv2d(nn.Module):
 
     def __init__(self, in_channels, out_channels, kernel_size, padding=0, padding_mode='reflect', device='cpu'):
         super().__init__()        
-        self.weight = nn.parameter.Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size], device=device))
-        self.bias = nn.parameter.Parameter(torch.full([out_channels], fill_value=0.0, device=device))
+        self.weight = Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size], device=device))
+        self.bias = Parameter(torch.full([out_channels], fill_value=0.0, device=device))
         self.weight_gain = np.sqrt(2) / np.sqrt(in_channels * kernel_size ** 2)   # For learning rate equalization
         self.padding = padding
         self.padding_mode = padding_mode
@@ -383,28 +385,28 @@ if __name__ == '__main__':
     batch_size = 2
 
     # Test G
-    # gen = Generator(final_resolution, prog_growth, device)
+    gen = Generator(final_resolution, prog_growth, device)
     print("init")
 
-    # z = torch.zeros((batch_size, LATENT_DIM), device=device)
-    # x_fake = gen(z)
-    # print(x_fake.shape)
+    z = torch.zeros((batch_size, LATENT_DIM), device=device)
+    x_fake = gen(z)
+    print(x_fake.shape)
 
-    # gen.synthesis_net.grow_new_block()
-    # gen.synthesis_net.alpha = 0.5
-    # x_fake = gen(z)
-    # print(x_fake.shape)
-    # gen.synthesis_net.fuse_new_block()
-    # x_fake = gen(z)
-    # print(x_fake.shape)
+    gen.synthesis_net.grow_new_block()
+    gen.synthesis_net.alpha = 0.5
+    x_fake = gen(z)
+    print(x_fake.shape)
+    gen.synthesis_net.fuse_new_block()
+    x_fake = gen(z)
+    print(x_fake.shape)
     
-    # gen.synthesis_net.grow_new_block()
-    # gen.synthesis_net.alpha = 0.5
-    # x_fake = gen(z)
-    # print(x_fake.shape)
-    # gen.synthesis_net.fuse_new_block()
-    # x_fake = gen(z)
-    # print(x_fake.shape)
+    gen.synthesis_net.grow_new_block()
+    gen.synthesis_net.alpha = 0.5
+    x_fake = gen(z)
+    print(x_fake.shape)
+    gen.synthesis_net.fuse_new_block()
+    x_fake = gen(z)
+    print(x_fake.shape)
 
 
     # Test D
@@ -412,8 +414,7 @@ if __name__ == '__main__':
     print("init")
     x_real = torch.zeros((batch_size, 3, final_resolution, final_resolution), device=device)
     pred = dis(x_real)
-    # # print(pred.shape)
-    # print(pred)
+    print(pred.shape)
 
     dis.grow_new_block()
     dis.alpha = 0.5

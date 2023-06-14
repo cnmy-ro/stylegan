@@ -4,6 +4,7 @@ Minimal implementation of StyleGAN in PyTorch.
 
 
 To implement:
+- [ ] Checkpointing
 - [ ] Check which loss
 - [x] Parameter initialization
 - [x] Equalized learning rate
@@ -17,4 +18,5 @@ To implement:
 
 
 References:
-1. Karras, Laine, Aila - A style-based generator architecture for generative adversarial networks. [[CVPR 2019]](http://openaccess.thecvf.com/content_CVPR_2019/html/Karras_A_Style-Based_Generator_Architecture_for_Generative_Adversarial_Networks_CVPR_2019_paper.html) [[arXiv 2018]](https://arxiv.org/abs/1812.04948)
+1. Karras, Laine, Aila - A style-based generator architecture for generative adversarial networks. [[arXiv 2018]](https://arxiv.org/abs/1812.04948) [[CVPR 2019]](http://openaccess.thecvf.com/content_CVPR_2019/html/Karras_A_Style-Based_Generator_Architecture_for_Generative_Adversarial_Networks_CVPR_2019_paper.html)
+2. Karras T, Aila T, Laine S, Lehtinen J. Progressive growing of gans for improved quality, stability, and variation. [[arXiv 2017]](https://arxiv.org/abs/1710.10196) [[ICLR 2018]](https://openreview.net/forum?id=Hk99zCeAb&)
