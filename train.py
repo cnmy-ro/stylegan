@@ -7,25 +7,34 @@ import wandb
 from tqdm import tqdm
 
 import config
+from utils.dataset import FFHQ128x128Dataset, InfiniteSampler, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
 from utils.nn import Generator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
-from utils.dataset import FFHQ128x128Dataset, InfiniteSampler, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING
-from utils.losses import nsgan_criterion
+from utils.criteria import nsgan_loss, r1_regularizer
 
 
 
-def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, max_samples=16):
+def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, max_samples=16):    
+    
+
+    loss_g, loss_d = float(loss_g.detach().cpu()), float(loss_d.detach().cpu())
+
     if iter_counter % config.log_freq == 0:
+
+        print(f"\n----- Iters: {iter_counter}  |  Images: {image_counter} -----")
+        print(f"----- Loss G: {loss_g:.3f}  |  Loss D: {loss_d:.3f}\n")
+
         if real.shape[0] > max_samples: real = real[:max_samples]
         if fake.shape[0] > max_samples: fake = fake[:max_samples]        
-        data_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1, 1)).permute((1, 2, 0)).numpy()
+        data_grid = make_grid(real.detach().cpu(), nrow=8, normalize=True, value_range=(-1, 1)).permute((1, 2, 0)).numpy()
         samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1, 1)).permute((1, 2, 0)).numpy()
         log_dict = {
             'Num reals processed': image_counter,
-            'Loss: G': float(loss_g.detach().cpu()),
-            'Loss: D': float(loss_d.detach().cpu()),
+            'Loss: G': loss_g,
+            'Loss: D': loss_d,
             'Samples': [wandb.Image(samples_grid)],
             'Data': [wandb.Image(data_grid)]
             }
+    
         wandb.log(log_dict, step=iter_counter)
 
 
@@ -80,7 +89,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
             generator.synthesis_net.grow_new_block()
             discriminator.grow_new_block()
 
-            batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING[dataloader.dataset.working_resolution]
+            batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[dataloader.dataset.working_resolution]
             dataloader = DataLoader(dataloader.dataset, batch_size=batch_size, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
             dataloader.dataset.double_working_resolution()
             # print("fading phase start")
@@ -115,7 +124,7 @@ def main():
     # Data
     dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
     sampler = InfiniteSampler(dataset_size=len(dataset))
-    if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING[MIN_WORKING_RESOLUTION]
+    if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[MIN_WORKING_RESOLUTION]
     else:                  init_batch_size = config.fixed_batch_size
     dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=1)
     
@@ -131,15 +140,16 @@ def main():
     wandb.init(project=config.project, name=config.run_name, dir=f"{config.training_output_dir}")
     
     # Training loop
-    image_counter = 0
-    for iter_counter in tqdm(range(1, config.num_iters + 1)):
-
+    image_counter, iter_counter = 0, 0
+    print("Training started")
+    while image_counter < config.num_training_images:
+        
         # Update G
         opt_g.zero_grad(set_to_none=True)
         for p in discriminator.parameters(): p.requires_grad = False
         latent = torch.randn((dataloader.batch_size, LATENT_DIM), device=config.device)
         fake = generator(latent)
-        loss_g = nsgan_criterion(discriminator(fake), is_real=True)
+        loss_g = nsgan_loss(discriminator(fake), is_real=True)
         loss_g.backward()
         opt_g.step()
 
@@ -148,12 +158,15 @@ def main():
         opt_d.zero_grad(set_to_none=True)
         batch = next(iter(dataloader))
         real = batch['image'].to(config.device)
-        loss_d = nsgan_criterion(discriminator(real), is_real=True) + nsgan_criterion(discriminator(fake.detach()), is_real=False)
+        real.requires_grad = True
+        loss_d = nsgan_loss(discriminator(real), is_real=True) + nsgan_loss(discriminator(fake.detach()), is_real=False) + \
+                 r1_regularizer(discriminator, real, config.r1_gamma)
         loss_d.backward()
-        opt_d.step()        
+        opt_d.step()
 
         # Log
         image_counter += real.shape[0]
+        iter_counter += 1        
         log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter)
 
         # Checkpoint
@@ -162,6 +175,9 @@ def main():
         # Progressive growing        
         if config.prog_growth:
             generator, discriminator, dataloader = grow_model(generator, discriminator, dataloader, image_counter)
+    
+    print("Training complete")
+
 
 
 # ---

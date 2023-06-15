@@ -5,7 +5,7 @@ Concise implementation of StyleGAN in PyTorch.
 
 ---
 To implement:
-- [ ] R1 loss penalty
+- [x] R1 loss penalty
 - [ ] Style mixing regularization
 - [ ] Truncation trick regularization
 - [ ] Model validation during training
