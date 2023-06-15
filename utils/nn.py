@@ -21,7 +21,7 @@ MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
 
 class Generator(nn.Module):
 
-    def __init__(self, final_resolution=256, prog_growth=False, device='cpu'):
+    def __init__(self, final_resolution=1024, prog_growth=False, device='cpu'):
         super().__init__()
         self.prog_growth = prog_growth
         self.mapping_net = MappingNetwork(device)
@@ -208,7 +208,7 @@ class AdaINLayer(nn.Module):
 
 class Discriminator(nn.Module):
 
-    def __init__(self, final_resolution=256, prog_growth=False, device='cpu'):
+    def __init__(self, final_resolution=1024, prog_growth=False, device='cpu'):
 
         super().__init__()
 

@@ -6,11 +6,8 @@ training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/traini
 
 device = 'cuda'
 
-final_resolution = 128
-
 data_root = Path("/exports/lkeb-hpc/csrao/datasets/FFHQ")
-# num_iters = 200000
-num_training_images = 1e6  # Training time
+num_training_images = 10e6  # Training time in terms of #real images to be processed
 
 fixed_batch_size = 16   # Only applicable when not using progressive growth
 

@@ -21,7 +21,8 @@ def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, ma
     if iter_counter % config.log_freq == 0:
 
         print(f"\n----- Iters: {iter_counter}  |  Images: {image_counter} -----")
-        print(f"----- Loss G: {loss_g:.3f}  |  Loss D: {loss_d:.3f}\n")
+        print(f"\t\t Loss G: {loss_g:.3f}")
+        print(f"\t\t Loss D: {loss_d:.3f}\n")
 
         if real.shape[0] > max_samples: real = real[:max_samples]
         if fake.shape[0] > max_samples: fake = fake[:max_samples]        
@@ -83,18 +84,18 @@ def grow_model(generator, discriminator, dataloader, image_counter):
     # If at the start of a growth half-cycle, handle growth
     if at_start_of_growth_half_cycle():
 
-        # If this is the start transition phase, double the resolution and grow new block
+        # If this is the start of transition phase, double the resolution and grow new block
         if in_transition_phase():
 
             generator.synthesis_net.grow_new_block()
             discriminator.grow_new_block()
 
-            batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[dataloader.dataset.working_resolution]
-            dataloader = DataLoader(dataloader.dataset, batch_size=batch_size, sampler=dataloader.sampler, num_workers=dataloader.num_workers)
             dataloader.dataset.double_working_resolution()
+            batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[dataloader.dataset.working_resolution]
+            dataloader = DataLoader(dataloader.dataset, batch_size=batch_size, sampler=dataloader.sampler, num_workers=dataloader.num_workers)            
             # print("fading phase start")
 
-        # If this is the start stabilization phase, fuse the block into net body
+        # If this is the start of stabilization phase, fuse the block into net body
         elif in_stabilization_phase():
             generator.synthesis_net.fuse_new_block()
             discriminator.fuse_new_block()
@@ -129,8 +130,8 @@ def main():
     dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=1)
     
     # Model
-    generator = Generator(config.final_resolution, config.prog_growth, config.device)
-    discriminator = Discriminator(config.final_resolution, config.prog_growth, config.device)
+    generator = Generator(DATASET_RESOLUTION, config.prog_growth, config.device)
+    discriminator = Discriminator(DATASET_RESOLUTION, config.prog_growth, config.device)
 
     # Optimizers
     opt_g = Adam(generator.parameters(), lr=0.001, betas=(0.0, 0.99))
@@ -140,7 +141,7 @@ def main():
     wandb.init(project=config.project, name=config.run_name, dir=f"{config.training_output_dir}")
     
     # Training loop
-    image_counter, iter_counter = 0, 0
+    iter_counter, image_counter = 0, 0
     print("Training started")
     while image_counter < config.num_training_images:
         
@@ -157,16 +158,15 @@ def main():
         for p in discriminator.parameters(): p.requires_grad = True
         opt_d.zero_grad(set_to_none=True)
         batch = next(iter(dataloader))
-        real = batch['image'].to(config.device)
-        real.requires_grad = True
+        real = batch['image'].to(config.device)        
         loss_d = nsgan_loss(discriminator(real), is_real=True) + nsgan_loss(discriminator(fake.detach()), is_real=False) + \
                  r1_regularizer(discriminator, real, config.r1_gamma)
         loss_d.backward()
         opt_d.step()
 
         # Log
-        image_counter += real.shape[0]
-        iter_counter += 1        
+        iter_counter += 1
+        image_counter += real.shape[0]        
         log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter)
 
         # Checkpoint

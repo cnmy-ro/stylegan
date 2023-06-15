@@ -11,6 +11,7 @@ def nsgan_loss(pred, is_real):
 
 
 def r1_regularizer(discriminator, real, r1_gamma):
+    real.requires_grad = True
     pred_real = discriminator(real)
     image_grad = torch.autograd.grad(outputs=[pred_real.sum()], inputs=[real])[0]
     return r1_gamma * 0.5 * image_grad.square().sum(dim=[1, 2, 3]).mean()
