@@ -28,7 +28,7 @@ class Generator(nn.Module):
         self.synthesis_net = SynthesisNetwork(final_resolution, prog_growth, device)
         
     def forward(self, z):
-        z = z / (z.square().mean() + 1e-8).sqrt()
+        z = z / (z.square().mean() + 1e-8).sqrt()  # Normalize
         w = self.mapping_net(z)
         x = self.synthesis_net(w)
         return x
@@ -154,7 +154,7 @@ class SynthesisNetworkBlock(nn.Module):
 
         # 1st conv block
         if not is_first_block:
-            self.layers.append(Resample(scale_factor=2)) 
+            self.layers.append(nn.Upsample(scale_factor=2, mode='nearest'))
             self.layers.append(Conv2d(in_channels, out_channels, kernel_size=3, padding=1, device=device))
         self.layers.extend([
             NoiseLayer(out_channels, device),
@@ -251,8 +251,8 @@ class Discriminator(nn.Module):
         if self.prog_growth:
             if self.has_unfused_new_block:
                 x_main = self.from_rgb(x)
-                x_main = self.new_block(x_main)                
-                x_skip = F.interpolate(x, size=(x.shape[2] // 2, x.shape[3] // 2), mode='nearest')
+                x_main = self.new_block(x_main)
+                x_skip = F.avg_pool2d(x, kernel_size=2, stride=2)
                 x_skip = self.from_rgb_skip(x_skip)
                 x = (1 - self.alpha) * x_skip + self.alpha * x_main
             else:
@@ -319,7 +319,7 @@ class DiscriminatorBlock(nn.Module):
                 nn.LeakyReLU(0.2),
                 Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
                 nn.LeakyReLU(0.2),
-                Resample(scale_factor=0.5)
+                nn.AvgPool2d(kernel_size=2, stride=2)
                 ]
 
         self.block = nn.Sequential(*layers).to(device)
@@ -362,16 +362,6 @@ class Conv2d(nn.Module):
         bias = self.bias
         x = F.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode)        
         return F.conv2d(x, weight, bias)        
-
-
-class Resample(nn.Module):
-
-    def __init__(self, scale_factor):
-        super().__init__()
-        self.scale_factor = scale_factor
-    
-    def forward(self, x):
-        return F.interpolate(x, size=(int(x.shape[2] * self.scale_factor), int(x.shape[3] * self.scale_factor)), mode='nearest') 
 
 
 class MinibatchSDLayer(nn.Module):

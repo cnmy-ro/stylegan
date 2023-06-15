@@ -1,6 +1,6 @@
 # StyleGAN
 
-Simple, yet fully-featured, implementation of StyleGAN in PyTorch.
+Concise implementation of StyleGAN in PyTorch.
 
 
 ---

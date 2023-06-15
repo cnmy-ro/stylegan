@@ -53,7 +53,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
         tol = dataloader.batch_size
         return image_counter % config.num_images_per_growth_half_cycle < tol
     
-    def in_fading_phase():
+    def in_transition_phase():
         return (image_counter // config.num_images_per_growth_half_cycle) % 2 != 0
     
     def in_stabilization_phase():
@@ -71,8 +71,8 @@ def grow_model(generator, discriminator, dataloader, image_counter):
     # If at the start of a growth half-cycle, handle growth
     if at_start_of_growth_half_cycle():
 
-        # If this is the start fading-in phase, double the resolution and grow new block
-        if in_fading_phase():
+        # If this is the start transition phase, double the resolution and grow new block
+        if in_transition_phase():
 
             generator.synthesis_net.grow_new_block()
             discriminator.grow_new_block()
@@ -86,13 +86,15 @@ def grow_model(generator, discriminator, dataloader, image_counter):
         elif in_stabilization_phase():
             generator.synthesis_net.fuse_new_block()
             discriminator.fuse_new_block()
+            dataloader.dataset.reset_alpha()    
             # print("FUSED")
 
-    # If inside the fading-in phase, update alpha
-    elif in_fading_phase():
+    # If inside the transition phase, update alpha
+    elif in_transition_phase():
         alpha = calc_alpha()
         generator.synthesis_net.set_alpha(alpha)
         discriminator.set_alpha(alpha)
+        dataloader.dataset.set_alpha(alpha)
         # print("fading...", alpha)
 
     # If inside the stabilization phase, do nothing
@@ -108,7 +110,7 @@ def main():
     config.training_output_dir.mkdir(exist_ok=True)
 
     # Data
-    dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth, config.lores_caching, config.training_output_dir)
+    dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth, config.lowres_caching, config.training_output_dir)
     sampler = InfiniteSampler(dataset_size=len(dataset))
     if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING[MIN_WORKING_RESOLUTION]
     else:                  init_batch_size = config.fixed_batch_size
