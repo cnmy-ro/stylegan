@@ -13,15 +13,18 @@ from utils.losses import nsgan_criterion
 
 
 
-def log_to_dashboard(loss_g, loss_d, fake, iter_counter, image_counter, max_samples=16):
+def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, max_samples=16):
     if iter_counter % config.log_freq == 0:
-        if fake.shape[0] > max_samples:  fake = fake[:max_samples]
+        if real.shape[0] > max_samples: real = real[:max_samples]
+        if fake.shape[0] > max_samples: fake = fake[:max_samples]        
+        data_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1, 1)).permute((1, 2, 0)).numpy()
         samples_grid = make_grid(fake.detach().cpu(), nrow=8, normalize=True, value_range=(-1, 1)).permute((1, 2, 0)).numpy()
         log_dict = {
             'Num reals processed': image_counter,
             'Loss: G': float(loss_g.detach().cpu()),
             'Loss: D': float(loss_d.detach().cpu()),
-            'Samples': [wandb.Image(samples_grid)]
+            'Samples': [wandb.Image(samples_grid)],
+            'Data': [wandb.Image(data_grid)]
             }
         wandb.log(log_dict, step=iter_counter)
 
@@ -110,7 +113,7 @@ def main():
     config.training_output_dir.mkdir(exist_ok=True)
 
     # Data
-    dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth, config.lowres_caching, config.training_output_dir)
+    dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
     sampler = InfiniteSampler(dataset_size=len(dataset))
     if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE_MAPPING[MIN_WORKING_RESOLUTION]
     else:                  init_batch_size = config.fixed_batch_size
@@ -151,7 +154,7 @@ def main():
 
         # Log
         image_counter += real.shape[0]
-        log_to_dashboard(loss_g, loss_d, fake, iter_counter, image_counter)
+        log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter)
 
         # Checkpoint
         dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter, image_counter)

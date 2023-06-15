@@ -16,7 +16,7 @@ class FFHQ128x128Dataset(Dataset):
     """
     Dataset of 128x128 FFHQ thumbnails. For fast prototyping purpose.
     """
-    def __init__(self, root, split, prog_growth, lowres_caching=False, training_output_dir=None):
+    def __init__(self, root, split, prog_growth):
         super().__init__()
         self.root = root
         self.split = split
@@ -26,10 +26,6 @@ class FFHQ128x128Dataset(Dataset):
             self.alpha = None
         else:
             self.working_resolution = DATASET_RESOLUTION
-
-        self.lowres_caching = lowres_caching
-        self.lowres_cache_path = training_output_dir / Path("lowres_cache")
-        self.lowres_cache_path.mkdir(exist_ok=True)
     
     def __len__(self):
         if self.split == 'train':  return 60000  # First 60k images for train
@@ -37,8 +33,7 @@ class FFHQ128x128Dataset(Dataset):
 
     def __getitem__(self, idx):
         image = self.fetch_image(idx)
-        image = image / 255.
-        image = image * 2 - 1  
+        image = (image / 255.) * 2 - 1  
         image = torch.tensor(image, dtype=torch.float).permute(2,0,1)
         return {'image': image}
     
@@ -46,41 +41,22 @@ class FFHQ128x128Dataset(Dataset):
         idx = int(idx)
         subdir = str(idx - idx % 1000).zfill(5)
         image_path = self.root / Path(f"thumbnails128x128/{subdir}/{str(idx).zfill(5)}.png")
-        # cached_image_path = self.lowres_cache_path / Path(f"{self.working_resolution}x{self.working_resolution}/{subdir}/{str(idx).zfill(5)}.png")
+        image_orig = PIL.Image.open(image_path)
         
-        # Lo-res caching mechanism
-        # if not self.lowres_caching or self.working_resolution == DATASET_RESOLUTION:
-        #     image = PIL.Image.open(image_path)
-        #     if self.working_resolution < DATASET_RESOLUTION:
-        #         image = image.resize((self.working_resolution, self.working_resolution), PIL.Image.BOX)
-        # else:            
-        #     if cached_image_path.exists():
-        #         image = PIL.Image.open(cached_image_path)
-        #     else:
-        #         image = PIL.Image.open(image_path)
-        #         image = image.resize((self.working_resolution, self.working_resolution), PIL.Image.BOX)
-        #         cached_image_path.parents[0].mkdir(parents=True, exist_ok=True)
-        #         image.save(cached_image_path)
-
-        image = PIL.Image.open(image_path)
-
-        if self.prog_growth:
-
-            if self.working_resolution < DATASET_RESOLUTION:
-                image_lowres_main = image.resize((self.working_resolution, self.working_resolution), PIL.Image.BOX)
-                image_lowres_main = np.asarray(image_lowres_main)
-                if self.working_resolution == MIN_WORKING_RESOLUTION:
-                    image = image_lowres_main
-
-                elif self.working_resolution > MIN_WORKING_RESOLUTION and self.alpha is not None:  # Alpha-blend during the transition phase of progressive growing
-                    image_lowres_skip = image.resize((self.working_resolution // 2, self.working_resolution // 2), PIL.Image.BOX)                    
-                    image_lowres_skip = image_lowres_skip.resize((self.working_resolution, self.working_resolution), PIL.Image.BOX)
-                    image_lowres_skip = np.asarray(image_lowres_skip)
-                    image = (1 - self.alpha) * image_lowres_skip + self.alpha * image_lowres_main
+        if not self.prog_growth:
+            return np.asarray(image_orig)
         else:
-            image = np.asarray(image)
-
-        return image
+            if self.working_resolution < DATASET_RESOLUTION:
+                image_lowres_main = image_orig.resize((self.working_resolution, self.working_resolution), PIL.Image.BOX)
+                if self.alpha is None:  # In stabilization phase, output only the lowres image
+                    return np.asarray(image_lowres_main)
+                else:                   # In transition phase, alpha-blend between current lowres and a 2x nearest upsampled version of this image from previous resolution
+                    assert self.working_resolution > MIN_WORKING_RESOLUTION
+                    image_lowres_skip = image_orig.resize((self.working_resolution // 2, self.working_resolution // 2), PIL.Image.BOX)  # This mirrors what happens inside the generator during transition phase
+                    image_lowres_skip = image_lowres_skip.resize((self.working_resolution, self.working_resolution), PIL.Image.NEAREST) #
+                    return (1 - self.alpha) * np.asarray(image_lowres_skip) + self.alpha * np.asarray(image_lowres_main)                #
+            else:
+                return np.asarray(image_orig)
     
     def double_working_resolution(self):
         self.working_resolution *= 2
