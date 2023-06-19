@@ -338,8 +338,8 @@ class Linear(nn.Module):
         super().__init__()
         self.weight = Parameter(torch.randn([out_features, in_features], device=device) / lr_multiplier)
         self.bias = Parameter(torch.full([out_features], fill_value=bias_init, device=device))
-        self.weight_gain = lr_multiplier * (np.sqrt(2) / np.sqrt(in_features))  # For learning rate equalization
-        self.bias_gain = lr_multiplier                                          #
+        self.weight_gain = lr_multiplier * (1 / np.sqrt(in_features))  # For lr equalization + lr reduction
+        self.bias_gain = lr_multiplier                                 #
     
     def forward(self, x):
         weight = self.weight * self.weight_gain
@@ -353,7 +353,7 @@ class Conv2d(nn.Module):
         super().__init__()        
         self.weight = Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size], device=device))
         self.bias = Parameter(torch.full([out_channels], fill_value=0.0, device=device))
-        self.weight_gain = np.sqrt(2) / np.sqrt(in_channels * kernel_size ** 2)   # For learning rate equalization
+        self.weight_gain = 1 / np.sqrt(in_channels * kernel_size ** 2)   # For lr equalization
         self.padding = padding
         self.padding_mode = padding_mode
 
