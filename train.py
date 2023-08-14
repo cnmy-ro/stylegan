@@ -139,8 +139,8 @@ def main():
     discriminator = Discriminator(DATASET_RESOLUTION, config.prog_growth, config.device)
 
     # Optimizers
-    opt_g = Adam(generator.parameters(), lr=0.001, betas=(0.0, 0.99))
-    opt_d = Adam(discriminator.parameters(), lr=0.001, betas=(0.0, 0.99))    
+    opt_g = Adam(generator.parameters(), lr=0.001, betas=(0.0, 0.99), eps=1e-8)
+    opt_d = Adam(discriminator.parameters(), lr=0.001, betas=(0.0, 0.99), eps=1e-8)
     
     # Dashboard    
     wandb.init(project=config.project, name=config.run_name, dir=f"{config.training_output_dir}")
@@ -164,7 +164,7 @@ def main():
         opt_d.zero_grad(set_to_none=True)
         batch = next(iter(dataloader))
         real = batch['image'].to(config.device)
-        loss_d = nsgan_loss(discriminator(real.detach()), is_real=True) + nsgan_loss(discriminator(fake.detach()), is_real=False) + \
+        loss_d = nsgan_loss(discriminator(real), is_real=True) + nsgan_loss(discriminator(fake.detach()), is_real=False) + \
                  r1_regularizer(discriminator, real, config.r1_gamma)
         loss_d.backward()
         opt_d.step()

@@ -28,10 +28,10 @@ class Generator(nn.Module):
         self.synthesis_net = SynthesisNetwork(final_resolution, prog_growth, device)
         
     def forward(self, z):
-        z = z / (z.square().sum() + 1e-8).sqrt()  # Normalize
+        z = z / (z.square().mean(dim=1, keepdim=True) + 1e-8).sqrt()  # Normalize
         w = self.mapping_net(z)
-        x = self.synthesis_net(w)
-        return x
+        image = self.synthesis_net(w)
+        return image
 
 
 class MappingNetwork(nn.Module):
@@ -193,7 +193,7 @@ class AdaINLayer(nn.Module):
     
     def __init__(self, num_channels, device):
         super().__init__()
-        self.instance_norm = nn.InstanceNorm2d(num_channels)
+        self.instance_norm = nn.InstanceNorm2d(num_channels, affine=False)
         self.affine_scale = Linear(LATENT_DIM, num_channels, bias_init=1.0, device=device)
         self.affine_bias = Linear(LATENT_DIM, num_channels, bias_init=0.0, device=device)
 
@@ -366,9 +366,8 @@ class MinibatchSDLayer(nn.Module):
 
     def forward(self, x):
         batch_size, _, height, width = x.shape
-        sd = torch.mean(torch.sqrt(torch.var(x, dim=0, unbiased=False) + 1e-5))
-        sd = torch.full((batch_size, 1, height, width), fill_value=float(sd), device=x.device)
-        # sd = sd.expand((batch_size, 1, height, width))
+        sd = torch.mean(torch.sqrt(torch.var(x, dim=0, unbiased=False) + 1e-8))
+        sd = sd.repeat((batch_size, 1, height, width))
         x = torch.cat([x, sd], dim=1)
         return x
 
