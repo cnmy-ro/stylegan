@@ -1,20 +1,26 @@
 from pathlib import Path
+import numpy as np
 import torch
-from torch.utils.data import DataLoader
 from torch.optim import Adam
 from torchvision.utils import make_grid
 import wandb
-from tqdm import tqdm
 
 import config
-from utils.dataset import FFHQ128x128Dataset, InfiniteSampler, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
+from utils.dataset import FFHQ128x128Dataset, InfiniteDataLoader, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
 from utils.nn import Generator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
 from utils.criteria import nsgan_loss, r1_regularizer
 
 
+# ---
+# Reproducibility
+np.random.seed(config.seed)
+torch.manual_seed(config.seed)
 
-def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, max_samples=16):    
-    
+
+# ---
+# Utils
+
+def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, max_samples=16):
 
     loss_g, loss_d = float(loss_g.detach().cpu()), float(loss_d.detach().cpu())
 
@@ -35,7 +41,7 @@ def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, ma
             'Samples': [wandb.Image(samples_grid)],
             'Data': [wandb.Image(data_grid)]
             }
-    
+
         wandb.log(log_dict, step=iter_counter)
 
 
@@ -92,7 +98,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
 
             dataloader.dataset.double_working_resolution()
             batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[dataloader.dataset.working_resolution]
-            dataloader = DataLoader(dataloader.dataset, batch_size=batch_size, sampler=dataloader.sampler, num_workers=dataloader.num_workers)            
+            dataloader = InfiniteDataLoader(dataloader.dataset, batch_size=batch_size, num_workers=dataloader.num_workers, shuffle=True)
             # print("fading phase start")
 
         # If this is the start of stabilization phase, fuse the block into net body
@@ -124,10 +130,9 @@ def main():
 
     # Data
     dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
-    sampler = InfiniteSampler(dataset_size=len(dataset))
     if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[MIN_WORKING_RESOLUTION]
     else:                  init_batch_size = config.fixed_batch_size
-    dataloader = DataLoader(dataset, batch_size=init_batch_size, sampler=sampler, num_workers=1)
+    dataloader = InfiniteDataLoader(dataset, batch_size=init_batch_size, num_workers=1, shuffle=True)
     
     # Model
     generator = Generator(DATASET_RESOLUTION, config.prog_growth, config.device)
@@ -158,8 +163,8 @@ def main():
         for p in discriminator.parameters(): p.requires_grad = True
         opt_d.zero_grad(set_to_none=True)
         batch = next(iter(dataloader))
-        real = batch['image'].to(config.device)        
-        loss_d = nsgan_loss(discriminator(real), is_real=True) + nsgan_loss(discriminator(fake.detach()), is_real=False) + \
+        real = batch['image'].to(config.device)
+        loss_d = nsgan_loss(discriminator(real.detach()), is_real=True) + nsgan_loss(discriminator(fake.detach()), is_real=False) + \
                  r1_regularizer(discriminator, real, config.r1_gamma)
         loss_d.backward()
         opt_d.step()

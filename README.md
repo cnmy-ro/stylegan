@@ -15,7 +15,7 @@ To implement:
 
 Issues:
 - [ ] Model mode-collapses. Solve this.
-- [ ] [Minibatch SD layer](https://github.com/cnmy-ro/stylegan/blob/2defb72cd4d338c9307874f285cb0c66315fcb26/utils/nn.py#LL374C17-L374C17): SD map calculation is not recorded by autograd (coz of `fill_value=float(sd)`). Implement differently?
+- [x] [Minibatch SD layer](https://github.com/cnmy-ro/stylegan/blob/2defb72cd4d338c9307874f285cb0c66315fcb26/utils/nn.py#LL374C17-L374C17): SD map calculation is not recorded by autograd (coz of `fill_value=float(sd)`). Implement differently?
 
 
 ---

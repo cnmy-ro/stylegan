@@ -1,10 +1,12 @@
 from pathlib import Path
 
+
+
 project = 'stylegan'
 run_name = 'trial'
 training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/training_output/")
-
 device = 'cuda'
+seed = 0
 
 data_root = Path("/exports/lkeb-hpc/csrao/datasets/FFHQ")
 num_training_images = 10e6  # Training time in terms of #real images to be processed

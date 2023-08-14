@@ -1,6 +1,6 @@
 from pathlib import Path
 import torch
-from torch.utils.data import Dataset, Sampler
+from torch.utils.data import Dataset, Sampler, DataLoader
 import numpy as np
 import PIL
 
@@ -32,6 +32,7 @@ class FFHQ128x128Dataset(Dataset):
         elif self.split == 'val':  return 10000  # Remaining 10k for val
 
     def __getitem__(self, idx):
+        if self.split == 'val': idx += 60000
         image = self.fetch_image(idx)
         image = (image / 255.) * 2 - 1  
         image = torch.tensor(image, dtype=torch.float).permute(2,0,1)
@@ -69,16 +70,23 @@ class FFHQ128x128Dataset(Dataset):
         self.alpha = None
 
 
-
-class InfiniteSampler(Sampler):
-    
-    def __init__(self, dataset_size, split='train'):
-        self.dataset_size = dataset_size
-        self.split = split
+class InfiniteDataLoader(DataLoader):
+    """
+    Taken from:  https://gist.github.com/MFreidank/821cc87b012c53fade03b0c7aba13958
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Initialize an iterator over the dataset.
+        self.dataset_iterator = super().__iter__()
 
     def __iter__(self):
-        while True:
-            if self.split == 'train':
-                yield from torch.randint(low=0, high=self.dataset_size, size=(1,))
-            elif self.split == 'val':
-                yield from torch.randint(low=60000, high=60000 + self.dataset_size, size=(1,))
+        return self
+
+    def __next__(self):
+        try:
+            batch = next(self.dataset_iterator)
+        except StopIteration:
+            # Dataset exhausted, use a new fresh iterator.
+            self.dataset_iterator = super().__iter__()
+            batch = next(self.dataset_iterator)
+        return batch
