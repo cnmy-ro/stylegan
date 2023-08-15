@@ -7,8 +7,8 @@ import wandb
 
 import config
 from utils.dataset import FFHQ128x128Dataset, InfiniteDataLoader, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
-from utils.nn import StyleGANGenerator, ProgGANGenerator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
-from utils.criteria import nsgan_loss, r1_regularizer, lsgan_loss
+from utils.nn import StyleGANGenerator, ProGANGenerator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
+from utils.criteria import nsgan_loss, r1_regularizer
 
 
 # ---
@@ -135,10 +135,10 @@ def main():
     dataloader = InfiniteDataLoader(dataset, batch_size=init_batch_size, num_workers=1, shuffle=True)
     
     # Model
-    if config.generator_design == 'proggan':  generator_class = ProgGANGenerator
+    if config.generator_design == 'progan':  generator_class = ProGANGenerator
     if config.generator_design == 'stylegan': generator_class = StyleGANGenerator
-    generator = generator_class(DATASET_RESOLUTION, config.prog_growth, config.device)
-    discriminator = Discriminator(DATASET_RESOLUTION, config.prog_growth, config.device)
+    generator = generator_class(DATASET_RESOLUTION, config.prog_growth).to(config.device)
+    discriminator = Discriminator(DATASET_RESOLUTION, config.prog_growth).to(config.device)
 
     # Optimizers
     opt_g = Adam(generator.parameters(), lr=0.001, betas=(0.0, 0.99), eps=1e-8)
