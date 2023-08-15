@@ -17,9 +17,268 @@ MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
 
 
 # ---
-# Networks
+# Discriminator module
 
-class Generator(nn.Module):
+class Discriminator(nn.Module):
+
+    def __init__(self, final_resolution=1024, prog_growth=False, device='cpu'):
+
+        super().__init__()
+
+        self.device = device
+
+        self.prog_growth = prog_growth
+        if prog_growth:
+            working_resolution = MIN_WORKING_RESOLUTION
+            self.has_unfused_new_block = False
+            self.new_block = None
+            self.to_rgb_skip = None
+            self.alpha = None   
+        else:
+            working_resolution = final_resolution
+
+        resolutions = [2**i for i in range(2, 12) if 2**i <= working_resolution]
+        
+        # Network body
+        self.body = [DiscriminatorBlock(MAX_CHANNELS, MAX_CHANNELS, is_last_block=True, device=device)]  # Last block, corresponding to lowest res (4x4)
+        in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
+        for res in resolutions[1:]: # Blocks laid out in reverse order - i.e. lo-res to hi-res
+            if res > 32: in_channels, out_channels = in_channels // 2, in_channels
+            self.body.append(DiscriminatorBlock(in_channels, out_channels, device=device))
+        self.body = self.body[::-1]
+
+        # fromRGB layer at the output resolution
+        self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=device)
+
+        # Last layer
+        self.fc_layer = Linear(MAX_CHANNELS, 1, bias_init=0.0, device=device)
+
+    def forward(self, image):
+        x = self._compute_input_features(image)
+        for block in self.body:
+            x = block(x)
+        pred = self.fc_layer(torch.reshape(x, (x.shape[0], -1)))
+        return pred
+    
+    def _compute_input_features(self, image):
+        if self.prog_growth:
+            if self.has_unfused_new_block:
+                x_main = self.from_rgb(image)
+                x_main = self.new_block(x_main)
+                x_skip = F.avg_pool2d(image, kernel_size=2, stride=2)
+                x_skip = self.from_rgb_skip(x_skip)
+                x = (1 - self.alpha) * x_skip + self.alpha * x_main
+            else:
+                x = self.from_rgb(image)
+        else:
+            x = self.from_rgb(image)
+        return x
+    
+    def set_alpha(self, alpha):
+        self.alpha = alpha
+
+    def grow_new_block(self):
+
+        # Grow a new block at 2x res
+        in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
+        self.new_block = DiscriminatorBlock(in_channels, out_channels, device=self.device)
+
+        # Move the existing fromRGB layer to the skip connection route
+        self.from_rgb_skip = self.from_rgb
+
+        # And replace it with a newly initialized layer in the 2x resolution route
+        self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=self.device)
+
+        # Reset alpha
+        self.alpha = 0
+        
+        # Set flag
+        self.has_unfused_new_block = True
+    
+    def fuse_new_block(self):
+        
+        # Fuse into the body
+        self.body.insert(0, self.new_block)
+        
+        # Cleanup
+        self.new_block = None
+        self.to_rgb_skip = None
+        self.alpha = None
+        
+        # Clear flag
+        self.has_unfused_new_block = False
+    
+
+class DiscriminatorBlock(nn.Module):
+
+    def __init__(self, in_channels, out_channels, is_last_block=False, device='cpu'):
+
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        if is_last_block:
+            layers = [
+                MinibatchSDLayer(),
+                Conv2d(in_channels + 1, in_channels, kernel_size=3, padding=1),
+                nn.LeakyReLU(0.2),
+                Conv2d(in_channels, out_channels, kernel_size=4),
+                nn.LeakyReLU(0.2)
+                ]
+        else:
+            layers = [
+                Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
+                nn.LeakyReLU(0.2),
+                Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+                nn.LeakyReLU(0.2),
+                nn.AvgPool2d(kernel_size=2, stride=2)
+                ]
+
+        self.block = nn.Sequential(*layers).to(device)
+
+    def forward(self, x):
+        return self.block(x)
+    
+
+class MinibatchSDLayer(nn.Module):
+
+    def forward(self, x):
+        batch_size, _, height, width = x.shape
+        sd = torch.mean(torch.sqrt(torch.var(x, dim=0, unbiased=False) + 1e-8))
+        sd = sd.expand((batch_size, 1, height, width))
+        x = torch.cat([x, sd], dim=1)
+        return x
+
+
+
+# ---
+# Progressive GAN generator
+
+class ProgGANGenerator(nn.Module):
+
+    def __init__(self, final_resolution, prog_growth, device):
+
+        super().__init__()
+
+        self.device = device
+        
+        self.prog_growth = prog_growth
+        if prog_growth:
+            working_resolution = MIN_WORKING_RESOLUTION
+            self.has_unfused_new_block = False
+            self.new_block = None
+            self.to_rgb_skip = None
+            self.alpha = None            
+        else:
+            working_resolution = final_resolution
+        
+        resolutions = [2**i for i in range(2, 12) if 2**i <= working_resolution]
+        
+        # Network body
+        self.body = [ProgGANGeneratorBlock(MAX_CHANNELS, MAX_CHANNELS, is_first_block=True, device=device)]
+        in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
+        for res in resolutions[1:]:
+            if res > 32: in_channels, out_channels = out_channels, out_channels // 2
+            self.body.append(ProgGANGeneratorBlock(in_channels, out_channels, device=device))
+        
+        # toRGB layer at the output resolution
+        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1, device=device)
+        
+    def forward(self, z):
+        batch_size = z.shape[0]
+        z = z / (z.square().mean(dim=1, keepdim=True) + 1e-8).sqrt()  # Normalize
+        x = z.reshape(batch_size, LATENT_DIM, 1, 1)
+        for block in self.body:
+            x = block(x)
+        image = self._compute_output_image(x)
+        return image
+
+    def _compute_output_image(self, x):
+        if self.prog_growth:
+            if self.has_unfused_new_block:
+                image_main = self.new_block(x)
+                image_main = self.to_rgb(image_main)
+                image_skip = self.to_rgb_skip(x)
+                image_skip = F.interpolate(image_skip, scale_factor=2, mode='nearest')
+                image = (1 - self.alpha) * image_skip + self.alpha * image_main
+            else:
+                image = self.to_rgb(x)
+        else:
+            image = self.to_rgb(x)
+        return image
+    
+    def set_alpha(self, alpha):
+        self.alpha = alpha
+
+    def grow_new_block(self):
+
+        # Grow a new block at 2x res
+        in_channels, out_channels = self.body[-1].out_channels, self.body[-1].out_channels // 2
+        self.new_block = ProgGANGeneratorBlock(in_channels, out_channels, device=self.device)
+
+        # Move the existing toRGB layer to the skip connection route
+        self.to_rgb_skip = self.to_rgb
+
+        # And replace it with a newly initialized layer in the 2x resolution route
+        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1, device=self.device)        
+        
+        # Reset alpha
+        self.alpha = 0
+
+        # Set flag
+        self.has_unfused_new_block = True
+    
+    def fuse_new_block(self):
+        
+        # Fuse into the body
+        self.body.append(self.new_block)
+        
+        # Cleanup
+        self.new_block = None
+        self.to_rgb_skip = None
+        self.alpha = None
+        
+        # Clear flag
+        self.has_unfused_new_block = False
+
+
+class ProgGANGeneratorBlock(nn.Module):
+
+    def __init__(self, in_channels, out_channels, is_first_block=False, device='cpu'):
+        
+        super().__init__()
+        
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        
+        layers = []
+
+        # 1st conv sub-block
+        if is_first_block:
+            layers.append(ConvTranspose2d(in_channels, out_channels, kernel_size=4))
+        else:
+            layers.append(nn.Upsample(scale_factor=2, mode='nearest'))
+            layers.append(Conv2d(in_channels, out_channels, kernel_size=3, padding=1))
+        layers.append(nn.LeakyReLU(0.2))
+        
+        # 2nd conv sub-block
+        layers.extend([
+            Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2)
+            ])
+        
+        self.block = nn.Sequential(*layers).to(device)
+   
+    def forward(self, x):
+        return self.block(x)
+
+
+
+# ---
+# StyleGAN generator
+
+class StyleGANGenerator(nn.Module):
 
     def __init__(self, final_resolution=1024, prog_growth=False, device='cpu'):
         super().__init__()
@@ -32,6 +291,15 @@ class Generator(nn.Module):
         w = self.mapping_net(z)
         image = self.synthesis_net(w)
         return image
+    
+    def set_alpha(self, alpha):
+        self.synthesis_net.set_alpha(alpha)
+        
+    def grow_new_block(self):
+        self.synthesis_net.grow_new_block()
+
+    def fuse_new_block(self):
+        self.synthesis_net.fuse_new_block()    
 
 
 class MappingNetwork(nn.Module):
@@ -152,7 +420,7 @@ class SynthesisNetworkBlock(nn.Module):
         
         self.layers = []
 
-        # 1st conv block
+        # 1st conv sub-block
         if not is_first_block:
             self.layers.append(nn.Upsample(scale_factor=2, mode='nearest'))
             self.layers.append(Conv2d(in_channels, out_channels, kernel_size=3, padding=1, device=device))
@@ -162,7 +430,7 @@ class SynthesisNetworkBlock(nn.Module):
             nn.LeakyReLU(0.2)
             ])
         
-        # 2nd conv block
+        # 2nd conv sub-block
         self.layers.extend([
             Conv2d(out_channels, out_channels, kernel_size=3, padding=1, device=device),
             NoiseLayer(out_channels, device),
@@ -198,137 +466,16 @@ class AdaINLayer(nn.Module):
         self.affine_bias = Linear(LATENT_DIM, num_channels, bias_init=0.0, device=device)
 
     def forward(self, x, w):
-        style_scale = self.affine_scale(w).unsqueeze(-1).unsqueeze(-1)
-        style_bias = self.affine_bias(w).unsqueeze(-1).unsqueeze(-1)
+        batch_size = x.shape[0]
+        style_scale = self.affine_scale(w).reshape(batch_size, -1, 1, 1)
+        style_bias = self.affine_bias(w).reshape(batch_size, -1, 1, 1)
         x = self.instance_norm(x) * style_scale + style_bias
         return x
 
 
-class Discriminator(nn.Module):
-
-    def __init__(self, final_resolution=1024, prog_growth=False, device='cpu'):
-
-        super().__init__()
-
-        self.device = device
-
-        self.prog_growth = prog_growth
-        if prog_growth:
-            working_resolution = MIN_WORKING_RESOLUTION
-            self.has_unfused_new_block = False
-            self.new_block = None
-            self.to_rgb_skip = None
-            self.alpha = None   
-        else:
-            working_resolution = final_resolution
-
-        resolutions = [2**i for i in range(2, 12) if 2**i <= working_resolution]
-        
-        # Network body
-        self.body = [DiscriminatorBlock(MAX_CHANNELS, MAX_CHANNELS, is_last_block=True, device=device)]  # Last block, corresponding to lowest res (4x4)
-        in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
-        for res in resolutions[1:]: # Blocks laid out in reverse order - i.e. lo-res to hi-res
-            if res > 32: in_channels, out_channels = in_channels // 2, in_channels
-            self.body.append(DiscriminatorBlock(in_channels, out_channels, device=device))
-        self.body = self.body[::-1]
-
-        # fromRGB layer at the output resolution
-        self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=device)
-
-        # Last layer
-        self.classifier = Linear(MAX_CHANNELS, 1, bias_init=0.0, device=device)
-
-    def forward(self, image):
-        x = self._compute_input_features(image)
-        for block in self.body:
-            x = block(x)
-        pred = self.classifier(torch.reshape(x, (x.shape[0], -1)))
-        return pred
-    
-    def _compute_input_features(self, image):
-        if self.prog_growth:
-            if self.has_unfused_new_block:
-                x_main = self.from_rgb(image)
-                x_main = self.new_block(x_main)
-                x_skip = F.avg_pool2d(image, kernel_size=2, stride=2)
-                x_skip = self.from_rgb_skip(x_skip)
-                x = (1 - self.alpha) * x_skip + self.alpha * x_main
-            else:
-                x = self.from_rgb(image)
-        else:
-            x = self.from_rgb(image)
-        return x
-    
-    def set_alpha(self, alpha):
-        self.alpha = alpha
-
-    def grow_new_block(self):
-
-        # Grow a new block at 2x res
-        in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
-        self.new_block = DiscriminatorBlock(in_channels, out_channels, device=self.device)
-
-        # Move the existing fromRGB layer to the skip connection route
-        self.from_rgb_skip = self.from_rgb
-
-        # And replace it with a newly initialized layer in the 2x resolution route
-        self.from_rgb = Conv2d(3, in_channels, kernel_size=1, device=self.device)
-
-        # Reset alpha
-        self.alpha = 0
-        
-        # Set flag
-        self.has_unfused_new_block = True
-    
-    def fuse_new_block(self):
-        
-        # Fuse into the body
-        self.body.insert(0, self.new_block)
-        
-        # Cleanup
-        self.new_block = None
-        self.to_rgb_skip = None
-        self.alpha = None
-        
-        # Clear flag
-        self.has_unfused_new_block = False
-    
-
-class DiscriminatorBlock(nn.Module):
-
-    def __init__(self, in_channels, out_channels, is_last_block=False, device='cpu'):
-
-        super().__init__()
-
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-
-        if is_last_block:
-            layers = [
-                MinibatchSDLayer(),
-                Conv2d(in_channels + 1, in_channels, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.2),
-                Conv2d(in_channels, out_channels, kernel_size=4),
-                nn.LeakyReLU(0.2)
-            ]
-        else:
-            layers= [
-                Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.2),
-                Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.2),
-                nn.AvgPool2d(kernel_size=2, stride=2)
-                ]
-
-        self.block = nn.Sequential(*layers).to(device)
-
-    def forward(self, x):
-        return self.block(x)
-
-
 
 # ---
-# Custom layers
+# Custom primitive layers
 
 class Linear(nn.Module):
 
@@ -359,17 +506,25 @@ class Conv2d(nn.Module):
         weight = self.weight * self.weight_gain
         bias = self.bias
         x = F.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode)        
-        return F.conv2d(x, weight, bias)        
+        return F.conv2d(x, weight, bias)
+    
 
+class ConvTranspose2d(nn.Module):
 
-class MinibatchSDLayer(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, output_padding=0, dilation=1, device='cpu'):
+        super().__init__()        
+        self.weight = Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size], device=device))
+        self.bias = Parameter(torch.full([out_channels], fill_value=0.0, device=device))
+        self.weight_gain = 1 / np.sqrt(in_channels * kernel_size ** 2)   # For lr equalization
+        self.stride = stride
+        self.padding = padding
+        self.output_padding = output_padding
+        self.dilation = dilation
 
     def forward(self, x):
-        batch_size, _, height, width = x.shape
-        sd = torch.mean(torch.sqrt(torch.var(x, dim=0, unbiased=False) + 1e-8))
-        sd = sd.repeat((batch_size, 1, height, width))
-        x = torch.cat([x, sd], dim=1)
-        return x
+        weight = self.weight * self.weight_gain
+        bias = self.bias
+        return F.conv_transpose2d(x, weight, bias, self.stride, self.padding, self.output_padding, dilation=self.dilation)
 
 
 
@@ -383,10 +538,10 @@ if __name__ == '__main__':
     batch_size = 4
 
     # Test G
-    gen = Generator(final_resolution, prog_growth, device)
+    gen = ProgGANGenerator(final_resolution, prog_growth, device)
     print("init")
 
     z = torch.randn((batch_size, LATENT_DIM), device=device)
     x_fake = gen(z)
     print(x_fake.sum(dim=[1,2,3]))
-    print(gen.mapping_net(z))
+    # print(gen.mapping_net(z))

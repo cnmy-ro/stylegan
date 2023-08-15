@@ -7,8 +7,8 @@ import wandb
 
 import config
 from utils.dataset import FFHQ128x128Dataset, InfiniteDataLoader, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
-from utils.nn import Generator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
-from utils.criteria import nsgan_loss, r1_regularizer
+from utils.nn import StyleGANGenerator, ProgGANGenerator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
+from utils.criteria import nsgan_loss, r1_regularizer, lsgan_loss
 
 
 # ---
@@ -93,7 +93,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
         # If this is the start of transition phase, double the resolution and grow new block
         if in_transition_phase():
 
-            generator.synthesis_net.grow_new_block()
+            generator.grow_new_block()
             discriminator.grow_new_block()
 
             dataloader.dataset.double_working_resolution()
@@ -103,7 +103,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
 
         # If this is the start of stabilization phase, fuse the block into net body
         elif in_stabilization_phase():
-            generator.synthesis_net.fuse_new_block()
+            generator.fuse_new_block()
             discriminator.fuse_new_block()
             dataloader.dataset.reset_alpha()    
             # print("FUSED")
@@ -111,7 +111,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
     # If inside the transition phase, update alpha
     elif in_transition_phase():
         alpha = calc_alpha()
-        generator.synthesis_net.set_alpha(alpha)
+        generator.set_alpha(alpha)
         discriminator.set_alpha(alpha)
         dataloader.dataset.set_alpha(alpha)
         # print("fading...", alpha)
@@ -135,7 +135,9 @@ def main():
     dataloader = InfiniteDataLoader(dataset, batch_size=init_batch_size, num_workers=1, shuffle=True)
     
     # Model
-    generator = Generator(DATASET_RESOLUTION, config.prog_growth, config.device)
+    if config.generator_design == 'proggan':  generator_class = ProgGANGenerator
+    if config.generator_design == 'stylegan': generator_class = StyleGANGenerator
+    generator = generator_class(DATASET_RESOLUTION, config.prog_growth, config.device)
     discriminator = Discriminator(DATASET_RESOLUTION, config.prog_growth, config.device)
 
     # Optimizers
@@ -164,8 +166,8 @@ def main():
         opt_d.zero_grad(set_to_none=True)
         batch = next(iter(dataloader))
         real = batch['image'].to(config.device)
-        loss_d = nsgan_loss(discriminator(real), is_real=True) + nsgan_loss(discriminator(fake.detach()), is_real=False) + \
-                 r1_regularizer(discriminator, real, config.r1_gamma)
+        loss_d = nsgan_loss(discriminator(real), is_real=True) + nsgan_loss(discriminator(fake.detach()), is_real=False)
+        if config.r1_gamma > 0: loss_d += r1_regularizer(discriminator, real, config.r1_gamma)
         loss_d.backward()
         opt_d.step()
 

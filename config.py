@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 project = 'stylegan'
-run_name = 'trial'
+run_name = 'proggan_trial'
 training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/training_output/")
 device = 'cuda'
 seed = 0
@@ -12,6 +12,8 @@ data_root = Path("/exports/lkeb-hpc/csrao/datasets/FFHQ")
 num_training_images = 10e6  # Training time in terms of #real images to be processed
 
 fixed_batch_size = 16   # Only applicable when not using progressive growth
+
+generator_design = 'proggan'  # Options: 'proggan' or 'stylegan'
 
 prog_growth = True
 num_images_per_growth_half_cycle = 800000  # if following paper values, this will be 800k

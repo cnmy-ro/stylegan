@@ -5,8 +5,8 @@
 
 # Compute and memory
 #SBATCH --partition=LKEBgpu
-#SBATCH --gres=gpu
-# SBATCH --gres=gpu:RTX6000:1
+# SBATCH --gres=gpu
+#SBATCH --gres=gpu:RTX6000:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 
