@@ -80,13 +80,13 @@ class Discriminator(nn.Module):
 
         # Grow a new block at 2x res
         in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
-        self.new_block = DiscriminatorBlock(in_channels, out_channels)
+        self.new_block = DiscriminatorBlock(in_channels, out_channels).to(self.body[0].device)
 
         # Move the existing fromRGB layer to the skip connection route
         self.from_rgb_skip = self.from_rgb
 
         # And replace it with a newly initialized layer in the 2x resolution route
-        self.from_rgb = Conv2d(3, in_channels, kernel_size=1)
+        self.from_rgb = Conv2d(3, in_channels, kernel_size=1).to(self.body[0].device)
 
         # Reset alpha
         self.alpha = 0
@@ -118,24 +118,24 @@ class DiscriminatorBlock(nn.Module):
         self.out_channels = out_channels
 
         if is_last_block:
-            layers = [
-                MinibatchSDLayer(),
-                Conv2d(in_channels + 1, in_channels, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.2),
-                Conv2d(in_channels, out_channels, kernel_size=4),
-                nn.LeakyReLU(0.2)
-                ]
+            layers = [MinibatchSDLayer(),
+                      Conv2d(in_channels + 1, in_channels, kernel_size=3, padding=1),
+                      nn.LeakyReLU(0.2),
+                      Conv2d(in_channels, out_channels, kernel_size=4),
+                      nn.LeakyReLU(0.2)]
         else:
-            layers = [
-                Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.2),
-                Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.2),
-                nn.AvgPool2d(kernel_size=2, stride=2)
-                ]
+            layers = [Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
+                      nn.LeakyReLU(0.2),
+                      Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+                      nn.LeakyReLU(0.2),
+                      nn.AvgPool2d(kernel_size=2, stride=2)]
 
         self.block = nn.Sequential(*layers)
 
+    @property
+    def device(self):
+        return next(self.parameters()).device
+    
     def forward(self, x):
         return self.block(x)
     
@@ -145,7 +145,7 @@ class MinibatchSDLayer(nn.Module):
     def forward(self, x):
         batch_size, _, height, width = x.shape
         sd = torch.mean(torch.sqrt(torch.var(x, dim=0, unbiased=False) + 1e-8))
-        sd = sd.expand((batch_size, 1, height, width))
+        sd = sd.repeat((batch_size, 1, height, width))
         x = torch.cat([x, sd], dim=1)
         return x
 
@@ -213,13 +213,13 @@ class ProGANGenerator(nn.Module):
 
         # Grow a new block at 2x res
         in_channels, out_channels = self.body[-1].out_channels, self.body[-1].out_channels // 2
-        self.new_block = ProGANGeneratorBlock(in_channels, out_channels)
+        self.new_block = ProGANGeneratorBlock(in_channels, out_channels).to(self.body[-1].device)
 
         # Move the existing toRGB layer to the skip connection route
         self.to_rgb_skip = self.to_rgb
 
         # And replace it with a newly initialized layer in the 2x resolution route
-        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1)        
+        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1).to(self.body[-1].device)
         
         # Reset alpha
         self.alpha = 0
@@ -265,7 +265,11 @@ class ProGANGeneratorBlock(nn.Module):
                    nn.LeakyReLU(0.2)]
         
         self.block = nn.Sequential(*layers)
-   
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
+    
     def forward(self, x):
         return self.block(x)
 
@@ -347,7 +351,8 @@ class SynthesisNetwork(nn.Module):
         self.x_init = Parameter(torch.ones((1, MAX_CHANNELS, 4, 4)))
 
     def forward(self, w):
-        x = torch.repeat_interleave(self.x_init, repeats=w.shape[0], dim=0)
+        batch_size, _ = w.shape
+        x = torch.repeat_interleave(self.x_init, repeats=batch_size, dim=0)
         for block in self.body:
             x = block(x, w)
         image = self._compute_output_image(x, w)
@@ -374,13 +379,13 @@ class SynthesisNetwork(nn.Module):
 
         # Grow a new block at 2x res
         in_channels, out_channels = self.body[-1].out_channels, self.body[-1].out_channels // 2
-        self.new_block = SynthesisNetworkBlock(in_channels, out_channels)
+        self.new_block = SynthesisNetworkBlock(in_channels, out_channels).to(self.body[-1].device)
 
         # Move the existing toRGB to the skip connection route
         self.to_rgb_skip = self.to_rgb
 
         # And replace it with a newly initialized layer in the 2x resolution route
-        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1)
+        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1).to(self.body[-1].device)
         
         # Reset alpha
         self.alpha = 0
@@ -422,11 +427,15 @@ class SynthesisNetworkBlock(nn.Module):
                         nn.LeakyReLU(0.2)]
         
         # 2nd conv sub-block
-        self.layers == [Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+        self.layers += [Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
                         NoiseLayer(out_channels),
                         AdaINLayer(out_channels),
                         nn.LeakyReLU(0.2)]
-   
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
+    
     def forward(self, x, w):
         for layer in self.layers:
             if isinstance(layer, AdaINLayer): x = layer(x, w)
@@ -451,14 +460,14 @@ class AdaINLayer(nn.Module):
     def __init__(self, num_channels):
         super().__init__()
         self.instance_norm = nn.InstanceNorm2d(num_channels, affine=False)
-        self.affine_scale = Linear(LATENT_DIM, num_channels, bias_init=1.0)
-        self.affine_bias = Linear(LATENT_DIM, num_channels, bias_init=0.0)
+        self.affine_s = Linear(LATENT_DIM, num_channels, bias_init=1.0)
+        self.affine_b = Linear(LATENT_DIM, num_channels, bias_init=0.0)
 
     def forward(self, x, w):
-        batch_size = x.shape[0]
-        style_scale = self.affine_scale(w).reshape(batch_size, -1, 1, 1)
-        style_bias = self.affine_bias(w).reshape(batch_size, -1, 1, 1)
-        x = self.instance_norm(x) * style_scale + style_bias
+        batch_size, num_channels, _, _ = x.shape
+        style_s = self.affine_s(w).reshape(batch_size, num_channels, 1, 1)
+        style_b = self.affine_b(w).reshape(batch_size, num_channels, 1, 1)
+        x = self.instance_norm(x) * style_s + style_b
         return x
 
 

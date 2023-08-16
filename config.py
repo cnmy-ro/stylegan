@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 project = 'stylegan'
-run_name = 'trial'
+run_name = 'stylegan_trial'
 training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/training_output/")
 device = 'cuda'
 seed = 0

@@ -14,7 +14,7 @@ To implement:
 - [ ] Inversion demo notebook: `notebooks/Inversion.ipynb`
 
 Issues:
-- [ ] Model mode-collapses. Solve this.
+- [x] Model mode-collapses. Solve this.
 
 
 ---
