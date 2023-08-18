@@ -135,7 +135,7 @@ def main():
     dataloader = InfiniteDataLoader(dataset, batch_size=init_batch_size, num_workers=1, shuffle=True)
     
     # Model
-    if config.generator_design == 'progan':  generator_class = ProGANGenerator
+    if config.generator_design == 'progan':   generator_class = ProGANGenerator
     if config.generator_design == 'stylegan': generator_class = StyleGANGenerator
     generator = generator_class(DATASET_RESOLUTION, config.prog_growth).to(config.device)
     discriminator = Discriminator(DATASET_RESOLUTION, config.prog_growth).to(config.device)

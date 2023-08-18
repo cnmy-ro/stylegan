@@ -3,8 +3,8 @@ from pathlib import Path
 
 
 project = 'stylegan'
-run_name = 'stylegan_trial'
-training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/training_output/")
+run_name = 'stylegan_trial_nogrow'
+training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/training/training_output/")
 device = 'cuda'
 seed = 0
 
@@ -15,7 +15,7 @@ fixed_batch_size = 16   # Only applicable when not using progressive growth
 
 generator_design = 'stylegan'  # Options: 'progan' or 'stylegan'
 
-prog_growth = True
+prog_growth = False
 num_images_per_growth_half_cycle = 800000  # if following paper values, this will be 800k
 
 r1_gamma = 10
