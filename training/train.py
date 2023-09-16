@@ -6,7 +6,8 @@ from torchvision.utils import make_grid
 import wandb
 
 import config
-from utils.dataset import FFHQ128x128Dataset, InfiniteDataLoader, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
+from utils.dataset import InfiniteDataLoader
+from utils.brats_dataset import BraTS20Dataset, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
 from utils.nn import StyleGANGenerator, ProGANGenerator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
 from utils.criteria import nsgan_loss, r1_regularizer
 
@@ -129,7 +130,7 @@ def main():
     config.training_output_dir.mkdir(exist_ok=True)
 
     # Data
-    dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
+    dataset = BraTS20Dataset(config.data_root, config.prog_growth)
     if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[MIN_WORKING_RESOLUTION]
     else:                  init_batch_size = config.fixed_batch_size
     dataloader = InfiniteDataLoader(dataset, batch_size=init_batch_size, num_workers=1, shuffle=True)

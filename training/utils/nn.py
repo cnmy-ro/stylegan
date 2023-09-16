@@ -47,7 +47,7 @@ class Discriminator(nn.Module):
         self.body = self.body[::-1]
 
         # fromRGB layer at the output resolution
-        self.from_rgb = Conv2d(3, in_channels, kernel_size=1)
+        self.from_rgb = Conv2d(1, in_channels, kernel_size=1)
 
         # Last layer
         self.fc_layer = Linear(MAX_CHANNELS, 1, bias_init=0.0)
@@ -86,7 +86,7 @@ class Discriminator(nn.Module):
         self.from_rgb_skip = self.from_rgb
 
         # And replace it with a newly initialized layer in the 2x resolution route
-        self.from_rgb = Conv2d(3, in_channels, kernel_size=1).to(self.body[0].device)
+        self.from_rgb = Conv2d(1, in_channels, kernel_size=1).to(self.body[0].device)
 
         # Reset alpha
         self.alpha = 0
@@ -181,7 +181,7 @@ class ProGANGenerator(nn.Module):
             self.body += [ProGANGeneratorBlock(in_channels, out_channels)]
         
         # toRGB layer at the output resolution
-        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1)
+        self.to_rgb = Conv2d(out_channels, 1, kernel_size=1)
         
     def forward(self, z):
         batch_size = z.shape[0]
@@ -219,7 +219,7 @@ class ProGANGenerator(nn.Module):
         self.to_rgb_skip = self.to_rgb
 
         # And replace it with a newly initialized layer in the 2x resolution route
-        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1).to(self.body[-1].device)
+        self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
         
         # Reset alpha
         self.alpha = 0
@@ -345,7 +345,7 @@ class SynthesisNetwork(nn.Module):
             self.body += [SynthesisNetworkBlock(in_channels, out_channels)]
         
         # toRGB layer at the output resolution
-        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1)
+        self.to_rgb = Conv2d(out_channels, 1, kernel_size=1)
         
         # Initial lowest res (4x4) feature map
         self.x_init = Parameter(torch.ones((1, MAX_CHANNELS, 4, 4)))
@@ -385,7 +385,7 @@ class SynthesisNetwork(nn.Module):
         self.to_rgb_skip = self.to_rgb
 
         # And replace it with a newly initialized layer in the 2x resolution route
-        self.to_rgb = Conv2d(out_channels, 3, kernel_size=1).to(self.body[-1].device)
+        self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
         
         # Reset alpha
         self.alpha = 0
