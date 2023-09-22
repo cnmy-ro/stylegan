@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name=genarch
-#SBATCH --output=/exports/lkeb-hpc/csrao/training_logs/stylegan/trial/shark-%j.log
+#SBATCH --output=/exports/lkeb-hpc/csrao/git-personal/stylegan/training/training_output/shark-%j.log
 
 # Compute and memory
 #SBATCH --partition=LKEBgpu

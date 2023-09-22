@@ -85,7 +85,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
         return alpha
 
     # If already at max resolution, do nothing and return
-    if dataloader.dataset.working_resolution == DATASET_RESOLUTION:
+    if dataloader.dataset.working_resolution == DATASET_RESOLUTION and not generator.has_unfused_new_block:
         return generator, discriminator, dataloader
     
     # If at the start of a growth half-cycle, handle growth

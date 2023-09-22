@@ -13,7 +13,7 @@ import torchvision.transforms.functional as F
 
 DATASET_RESOLUTION = 128
 MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
-WORKING_RESOLUTION_TO_BATCH_SIZE = {8: 256, 16: 128, 32: 64, 64: 32, 128: 16}
+WORKING_RESOLUTION_TO_BATCH_SIZE = {8: 128, 16: 128, 32: 64, 64: 32, 128: 16}
 DATA_SUBSETS_INFO_FILE = Path("/exports/lkeb-hpc/csrao/datasets/BraTS2020_train_kaggle/brats20_subsets_info.csv")
 
 
@@ -39,13 +39,8 @@ class BraTS20Dataset(Dataset):
         return len(self.slice_filepaths)
 
     def __getitem__(self, idx):
-
-        # Fetch
         image = self._fetch_slice(idx)
-
-        # Normalize intensities to [-1, 1]
         image = rescale_intensity(image, to_range=[-1, 1])
-
         example = {'image': image}
         return example
     
@@ -55,36 +50,48 @@ class BraTS20Dataset(Dataset):
             slice_array = np.asarray(hf['image'])
         
         contrasts = {
-        't1w':    slice_array[:, :, 1],
-        't1w_gd': slice_array[:, :, 2],
-        't2w':    slice_array[:, :, 3],
-        'flair':  slice_array[:, :, 0]
-        }
-
+            't1w':    slice_array[:, :, 1],
+            't1w_gd': slice_array[:, :, 2],
+            't2w':    slice_array[:, :, 3],
+            'flair':  slice_array[:, :, 0]
+            }
         contrast = np.random.choice(list(contrasts.keys()))
         image = contrasts[contrast]
 
-        image_orig = np.transpose(image, (1, 0))  # (W,H) to (H,W)        
-        image_orig = torch.from_numpy(image_orig).to(torch.float).unsqueeze(0)  # To tensor of shape (C,H,W)
+        image = np.transpose(image, (1, 0))  # (W,H) to (H,W)        
+        image = torch.from_numpy(image).to(torch.float).unsqueeze(0)  # To tensor of shape (C,H,W)        
 
         if not self.prog_growth:
-            return np.asarray(image_orig)
+            return F.resize(image, (DATASET_RESOLUTION, DATASET_RESOLUTION), F.InterpolationMode.BILINEAR)
         else:
             if self.working_resolution < DATASET_RESOLUTION:
-                image_lowres_main = F.resize(image_orig, (self.working_resolution, self.working_resolution), F.InterpolationMode.BILINEAR)
+                image_lowres_main = F.resize(image, (self.working_resolution, self.working_resolution), F.InterpolationMode.BILINEAR)
                 if self.alpha is None:  # In stabilization phase, output only the lowres image
                     return image_lowres_main
                 else:                   # In transition phase, alpha-blend between current lowres and a 2x nearest upsampled version of this image from previous resolution
                     assert self.working_resolution > MIN_WORKING_RESOLUTION
-                    image_lowres_skip = F.resize(image_orig, (self.working_resolution // 2, self.working_resolution // 2), F.InterpolationMode.BILINEAR)  # This mirrors what happens inside the generator during transition phase
+                    image_lowres_skip = F.resize(image, (self.working_resolution // 2, self.working_resolution // 2), F.InterpolationMode.BILINEAR)  # This mirrors what happens inside the generator during transition phase
                     image_lowres_skip = F.resize(image_lowres_skip, (self.working_resolution, self.working_resolution), F.InterpolationMode.NEAREST) #
                     return (1 - self.alpha) * image_lowres_skip + self.alpha * image_lowres_main                                           #
             else:
-                return image_orig
+                return F.resize(image, (DATASET_RESOLUTION, DATASET_RESOLUTION), F.InterpolationMode.BILINEAR)
+
+    def double_working_resolution(self):
+        self.working_resolution *= 2
+        self.alpha = 0
+    
+    def set_alpha(self, alpha):
+        self.alpha = alpha
+    
+    def reset_alpha(self):
+        self.alpha = None
+        
 
 def rescale_intensity(image, from_range=None, to_range=[-1,1], clip=False):
     
     if from_range is None:
+        if image.min() == image.max():
+            return image
         from_range = (image.min(), image.max())
 
     # Clip values that are outside of the source range
@@ -101,6 +108,3 @@ def rescale_intensity(image, from_range=None, to_range=[-1,1], clip=False):
     image = image * (to_range[1] - to_range[0]) + to_range[0]
 
     return image
-
-if __name__ == '__main__':
-    dataset = BraTS20SynthesisDataset(Path("/exports/lkeb-hpc/csrao/datasets/BraTS2020_train_kaggle"), prog_growth=True)
