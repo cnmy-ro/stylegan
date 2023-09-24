@@ -27,15 +27,15 @@ class Discriminator(nn.Module):
 
         self.prog_growth = prog_growth
         if prog_growth:
-            working_resolution = MIN_WORKING_RESOLUTION
+            self.working_resolution = MIN_WORKING_RESOLUTION
             self.has_unfused_new_block = False
             self.new_block = None
             self.to_rgb_skip = None
             self.alpha = None   
         else:
-            working_resolution = final_resolution
+            self.working_resolution = final_resolution
 
-        resolutions = [2**i for i in range(2, 12) if 2**i <= working_resolution]
+        resolutions = [2**i for i in range(2, 12) if 2**i <= self.working_resolution]
         
         # Network body
         self.body = nn.ModuleList()
@@ -78,14 +78,24 @@ class Discriminator(nn.Module):
 
     def grow_new_block(self):
 
-        # Grow a new block at 2x res
-        in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
+        # Double the working resolution
+        self.working_resolution *= 2
+
+        # Grow a new block at working resolution
+        if self.working_resolution > 32:
+            in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
+        else:
+            in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
         self.new_block = DiscriminatorBlock(in_channels, out_channels).to(self.body[0].device)
 
         # Move the existing fromRGB layer to the skip connection route
-        self.from_rgb_skip = self.from_rgb
+        # self.from_rgb_skip = self.from_rgb
+        self.from_rgb_skip = Conv2d(1, in_channels, kernel_size=1).to(self.body[0].device)
+        with torch.no_grad():
+            self.from_rgb_skip.weight.copy_(self.from_rgb.weight)
+            self.from_rgb_skip.bias.copy_(self.from_rgb.bias)
 
-        # And replace it with a newly initialized layer in the 2x resolution route
+        # And replace it with a newly initialized layer in the working resolution route
         self.from_rgb = Conv2d(1, in_channels, kernel_size=1).to(self.body[0].device)
 
         # Reset alpha
@@ -101,7 +111,7 @@ class Discriminator(nn.Module):
         
         # Cleanup
         self.new_block = None
-        self.to_rgb_skip = None
+        self.from_rgb_skip = None
         self.alpha = None
         
         # Clear flag
@@ -162,15 +172,15 @@ class ProGANGenerator(nn.Module):
 
         self.prog_growth = prog_growth
         if prog_growth:
-            working_resolution = MIN_WORKING_RESOLUTION
+            self.working_resolution = MIN_WORKING_RESOLUTION
             self.has_unfused_new_block = False
             self.new_block = None
             self.to_rgb_skip = None
             self.alpha = None            
         else:
-            working_resolution = final_resolution
+            self.working_resolution = final_resolution
         
-        resolutions = [2**i for i in range(2, 12) if 2**i <= working_resolution]
+        resolutions = [2**i for i in range(2, 12) if 2**i <= self.working_resolution]
         
         # Network body
         self.body = nn.ModuleList()
@@ -211,14 +221,24 @@ class ProGANGenerator(nn.Module):
 
     def grow_new_block(self):
 
-        # Grow a new block at 2x res
-        in_channels, out_channels = self.body[-1].out_channels, self.body[-1].out_channels // 2
+        # Double the working resolution
+        self.working_resolution *= 2
+
+        # Grow a new block at working resolution
+        if self.working_resolution > 32:
+            in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
+        else:
+            in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
         self.new_block = ProGANGeneratorBlock(in_channels, out_channels).to(self.body[-1].device)
 
         # Move the existing toRGB layer to the skip connection route
-        self.to_rgb_skip = self.to_rgb
+        # self.to_rgb_skip = self.to_rgb
+        self.to_rgb_skip = self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
+        with torch.no_grad():
+            self.to_rgb_skip.weight.copy_(self.to_rgb.weight)
+            self.to_rgb_skip.bias.copy_(self.to_rgb.bias)
 
-        # And replace it with a newly initialized layer in the 2x resolution route
+        # And replace it with a newly initialized layer in the working resolution route
         self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
         
         # Reset alpha
@@ -326,15 +346,15 @@ class SynthesisNetwork(nn.Module):
         
         self.prog_growth = prog_growth
         if prog_growth:
-            working_resolution = MIN_WORKING_RESOLUTION
+            self.working_resolution = MIN_WORKING_RESOLUTION
             self.has_unfused_new_block = False
             self.new_block = None
             self.to_rgb_skip = None
             self.alpha = None            
         else:
-            working_resolution = final_resolution
+            self.working_resolution = final_resolution
         
-        resolutions = [2**i for i in range(2, 12) if 2**i <= working_resolution]
+        resolutions = [2**i for i in range(2, 12) if 2**i <= self.working_resolution]
         
         # Network body
         self.body = nn.ModuleList()
@@ -377,14 +397,24 @@ class SynthesisNetwork(nn.Module):
 
     def grow_new_block(self):
 
-        # Grow a new block at 2x res
-        in_channels, out_channels = self.body[-1].out_channels, self.body[-1].out_channels // 2
+        # Double the working resolution
+        self.working_resolution *= 2
+
+        # Grow a new block at working resolution
+        if self.working_resolution > 32:
+            in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
+        else:
+            in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
         self.new_block = SynthesisNetworkBlock(in_channels, out_channels).to(self.body[-1].device)
 
         # Move the existing toRGB to the skip connection route
-        self.to_rgb_skip = self.to_rgb
+        # self.to_rgb_skip = self.to_rgb
+        self.to_rgb_skip = self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
+        with torch.no_grad():
+            self.to_rgb_skip.weight.copy_(self.to_rgb.weight)
+            self.to_rgb_skip.bias.copy_(self.to_rgb.bias)
 
-        # And replace it with a newly initialized layer in the 2x resolution route
+        # And replace it with a newly initialized layer in the working resolution route
         self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
         
         # Reset alpha
@@ -531,15 +561,16 @@ class ConvTranspose2d(nn.Module):
 if __name__ == '__main__':
     
     device = 'cuda'
-    final_resolution = 8
+    final_resolution = 32
     prog_growth = False
     batch_size = 4
 
-    # Test G
-    gen = ProGANGenerator(final_resolution, prog_growth).to(device)
-    print("init")
+    # Test
+    dis = Discriminator(final_resolution, prog_growth).to(device)
+    if prog_growth:
+        for _ in range(2):
+            dis.grow_new_block()
+            dis.fuse_new_block()
 
-    z = torch.randn((batch_size, LATENT_DIM), device=device)
-    x_fake = gen(z)
-    print(x_fake.sum(dim=[1,2,3]))
-    # print(gen.mapping_net(z))
+    for i, p in enumerate(dis.parameters()):
+        print(i, p.shape)

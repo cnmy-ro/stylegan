@@ -48,7 +48,8 @@ def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, ma
 
 def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter, image_counter):
     
-    if iter_counter % config.checkpoint_freq == 0:
+    # Save checkpoint only if there're no unfused blocks
+    if iter_counter % config.checkpoint_freq == 0 and not discriminator.has_unfused_new_block:
         
         checkpoint = {
             'iter_counter': iter_counter,
@@ -68,6 +69,10 @@ def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter, image_
 
 
 def grow_model(generator, discriminator, dataloader, image_counter):
+    """
+    |--------------- growth full cycle ------------------|
+    |--- transition phase ---|--- stabilization phase ---|
+    """
 
     def at_start_of_growth_half_cycle():
         tol = dataloader.batch_size
@@ -85,7 +90,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
         return alpha
 
     # If already at max resolution, do nothing and return
-    if dataloader.dataset.working_resolution == DATASET_RESOLUTION and not generator.has_unfused_new_block:
+    if dataloader.dataset.working_resolution == DATASET_RESOLUTION and not discriminator.has_unfused_new_block:
         return generator, discriminator, dataloader
     
     # If at the start of a growth half-cycle, handle growth

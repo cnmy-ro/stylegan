@@ -13,7 +13,7 @@ import torchvision.transforms.functional as F
 
 DATASET_RESOLUTION = 128
 MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
-WORKING_RESOLUTION_TO_BATCH_SIZE = {8: 128, 16: 128, 32: 64, 64: 32, 128: 16}
+WORKING_RESOLUTION_TO_BATCH_SIZE = {8: 256, 16: 128, 32: 64, 64: 32, 128: 16}
 DATA_SUBSETS_INFO_FILE = Path("/exports/lkeb-hpc/csrao/datasets/BraTS2020_train_kaggle/brats20_subsets_info.csv")
 
 
