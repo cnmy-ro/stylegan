@@ -12,6 +12,7 @@ import numpy as np
 LATENT_DIM = 512
 MAPPING_NET_DEPTH = 8
 MAX_CHANNELS = 512
+NUM_IMG_CHANNELS = 1
 MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
 
 
@@ -47,7 +48,7 @@ class Discriminator(nn.Module):
         self.body = self.body[::-1]
 
         # fromRGB layer at the output resolution
-        self.from_rgb = Conv2d(1, in_channels, kernel_size=1)
+        self.from_rgb = Conv2d(NUM_IMG_CHANNELS, in_channels, kernel_size=1)
 
         # Last layer
         self.fc_layer = Linear(MAX_CHANNELS, 1, bias_init=0.0)
@@ -89,14 +90,13 @@ class Discriminator(nn.Module):
         self.new_block = DiscriminatorBlock(in_channels, out_channels).to(self.body[0].device)
 
         # Move the existing fromRGB layer to the skip connection route
-        # self.from_rgb_skip = self.from_rgb
-        self.from_rgb_skip = Conv2d(1, in_channels, kernel_size=1).to(self.body[0].device)
+        self.from_rgb_skip = Conv2d(NUM_IMG_CHANNELS, self.from_rgb.out_channels, kernel_size=1).to(self.body[0].device)
         with torch.no_grad():
             self.from_rgb_skip.weight.copy_(self.from_rgb.weight)
             self.from_rgb_skip.bias.copy_(self.from_rgb.bias)
 
         # And replace it with a newly initialized layer in the working resolution route
-        self.from_rgb = Conv2d(1, in_channels, kernel_size=1).to(self.body[0].device)
+        self.from_rgb = Conv2d(NUM_IMG_CHANNELS, in_channels, kernel_size=1).to(self.body[0].device)
 
         # Reset alpha
         self.alpha = 0
@@ -191,7 +191,7 @@ class ProGANGenerator(nn.Module):
             self.body += [ProGANGeneratorBlock(in_channels, out_channels)]
         
         # toRGB layer at the output resolution
-        self.to_rgb = Conv2d(out_channels, 1, kernel_size=1)
+        self.to_rgb = Conv2d(out_channels, NUM_IMG_CHANNELS, kernel_size=1)
         
     def forward(self, z):
         batch_size = z.shape[0]
@@ -226,20 +226,19 @@ class ProGANGenerator(nn.Module):
 
         # Grow a new block at working resolution
         if self.working_resolution > 32:
-            in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
+            in_channels, out_channels = self.body[-1].out_channels, self.body[-1].out_channels // 2
         else:
             in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
         self.new_block = ProGANGeneratorBlock(in_channels, out_channels).to(self.body[-1].device)
 
         # Move the existing toRGB layer to the skip connection route
-        # self.to_rgb_skip = self.to_rgb
-        self.to_rgb_skip = self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
+        self.to_rgb_skip = Conv2d(self.to_rgb.in_channels, NUM_IMG_CHANNELS, kernel_size=1).to(self.body[-1].device)
         with torch.no_grad():
             self.to_rgb_skip.weight.copy_(self.to_rgb.weight)
             self.to_rgb_skip.bias.copy_(self.to_rgb.bias)
 
         # And replace it with a newly initialized layer in the working resolution route
-        self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
+        self.to_rgb = Conv2d(out_channels, NUM_IMG_CHANNELS, kernel_size=1).to(self.body[-1].device)
         
         # Reset alpha
         self.alpha = 0
@@ -365,7 +364,7 @@ class SynthesisNetwork(nn.Module):
             self.body += [SynthesisNetworkBlock(in_channels, out_channels)]
         
         # toRGB layer at the output resolution
-        self.to_rgb = Conv2d(out_channels, 1, kernel_size=1)
+        self.to_rgb = Conv2d(out_channels, NUM_IMG_CHANNELS, kernel_size=1)
         
         # Initial lowest res (4x4) feature map
         self.x_init = Parameter(torch.ones((1, MAX_CHANNELS, 4, 4)))
@@ -402,20 +401,19 @@ class SynthesisNetwork(nn.Module):
 
         # Grow a new block at working resolution
         if self.working_resolution > 32:
-            in_channels, out_channels = self.body[0].in_channels // 2, self.body[0].in_channels
+            in_channels, out_channels = self.body[-1].out_channels, self.body[-1].out_channels // 2
         else:
             in_channels, out_channels = MAX_CHANNELS, MAX_CHANNELS
         self.new_block = SynthesisNetworkBlock(in_channels, out_channels).to(self.body[-1].device)
 
         # Move the existing toRGB to the skip connection route
-        # self.to_rgb_skip = self.to_rgb
-        self.to_rgb_skip = self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
+        self.to_rgb_skip = Conv2d(self.to_rgb.in_channels, NUM_IMG_CHANNELS, kernel_size=1).to(self.body[-1].device)
         with torch.no_grad():
             self.to_rgb_skip.weight.copy_(self.to_rgb.weight)
             self.to_rgb_skip.bias.copy_(self.to_rgb.bias)
 
         # And replace it with a newly initialized layer in the working resolution route
-        self.to_rgb = Conv2d(out_channels, 1, kernel_size=1).to(self.body[-1].device)
+        self.to_rgb = Conv2d(out_channels, NUM_IMG_CHANNELS, kernel_size=1).to(self.body[-1].device)
         
         # Reset alpha
         self.alpha = 0
@@ -523,7 +521,9 @@ class Linear(nn.Module):
 class Conv2d(nn.Module):
 
     def __init__(self, in_channels, out_channels, kernel_size, padding=0, padding_mode='reflect'):
-        super().__init__()        
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         self.weight = Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size]))
         self.bias = Parameter(torch.full([out_channels], fill_value=0.0))
         self.weight_gain = np.sqrt(2) / np.sqrt(in_channels * kernel_size * kernel_size)  # For lr equalization
@@ -540,7 +540,9 @@ class Conv2d(nn.Module):
 class ConvTranspose2d(nn.Module):
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, output_padding=0, dilation=1):
-        super().__init__()        
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         self.weight = Parameter(torch.randn([out_channels, in_channels, kernel_size, kernel_size]))
         self.bias = Parameter(torch.full([out_channels], fill_value=0.0))
         self.weight_gain = 1 / np.sqrt(in_channels * kernel_size ** 2)   # For lr equalization

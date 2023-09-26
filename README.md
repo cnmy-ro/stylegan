@@ -5,6 +5,7 @@ Concise implementation of StyleGAN in PyTorch.
 
 ---
 To implement:
+- [ ] Resuming training from a checkpoint
 - [ ] Replace nearest upsampling and avgpool downsampling with low-pass filtering + bilinear sampling
 - [ ] Model validation step: FID
 - [x] R1 loss penalty
@@ -12,9 +13,6 @@ To implement:
 - [ ] Truncation trick regularization
 - [ ] Sampling demo notebook: `notebooks/Sampling.ipynb`
 - [ ] Inversion demo notebook: `notebooks/Inversion.ipynb`
-
-Issues:
-- [x] Model mode-collapses. Solve this.
 
 
 ---
