@@ -11,8 +11,8 @@ To implement:
 - [x] R1 loss penalty
 - [ ] Style mixing regularization
 - [ ] Truncation trick regularization
-- [ ] Sampling demo notebook: `notebooks/Sampling.ipynb`
-- [ ] Inversion demo notebook: `notebooks/Inversion.ipynb`
+- [x] Sampling demo notebook: `notebooks/Sampling.ipynb`
+- [x] Inversion demo notebook: `notebooks/Inversion.ipynb`
 
 
 ---
