@@ -72,7 +72,7 @@ class BraTS20Dataset(Dataset):
                     assert self.working_resolution > MIN_WORKING_RESOLUTION
                     image_lowres_skip = F.resize(image, (self.working_resolution // 2, self.working_resolution // 2), F.InterpolationMode.BILINEAR)  # This mirrors what happens inside the generator during transition phase
                     image_lowres_skip = F.resize(image_lowres_skip, (self.working_resolution, self.working_resolution), F.InterpolationMode.NEAREST) #
-                    return (1 - self.alpha) * image_lowres_skip + self.alpha * image_lowres_main                                           #
+                    return (1 - self.alpha) * image_lowres_skip + self.alpha * image_lowres_main                                                     #
             else:
                 return F.resize(image, (DATASET_RESOLUTION, DATASET_RESOLUTION), F.InterpolationMode.BILINEAR)
 
