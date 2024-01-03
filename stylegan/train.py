@@ -2,14 +2,14 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.optim import Adam
+import torch.nn.functional as F
 from torchvision.utils import make_grid
 import wandb
 
 import config
-from utils.dataset import InfiniteDataLoader
+from stylegan.utils.ffhq128x128_dataset import InfiniteDataLoader
 from utils.brats_dataset import BraTS20Dataset, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
 from utils.nn import StyleGANGenerator, ProGANGenerator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
-from utils.criteria import nsgan_loss, r1_regularizer
 
 
 # ---
@@ -127,6 +127,20 @@ def grow_model(generator, discriminator, dataloader, image_counter):
         pass
 
     return generator, discriminator, dataloader
+
+
+def nsgan_loss(pred, is_real):
+    if is_real: target = torch.ones_like(pred)
+    else:       target = torch.zeros_like(pred)
+    loss = F.binary_cross_entropy_with_logits(pred, target)
+    return loss
+
+
+def r1_regularizer(discriminator, real, r1_gamma):
+    real.requires_grad = True
+    pred_real = discriminator(real)
+    image_grad = torch.autograd.grad(outputs=[pred_real.sum()], inputs=[real])[0]
+    return r1_gamma * 0.5 * image_grad.square().sum(dim=[1, 2, 3]).mean()
 
 
 def main():
