@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 import numpy as np
 import torch
@@ -7,9 +8,9 @@ from torchvision.utils import make_grid
 import wandb
 
 import config
-from stylegan.utils.ffhq128x128_dataset import InfiniteDataLoader
-from utils.brats_dataset import BraTS20Dataset, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
-from utils.nn import StyleGANGenerator, ProGANGenerator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
+from ffhq128x128_dataset import InfiniteDataLoader, FFHQ128x128Dataset, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
+# from brats_dataset import BraTS20Dataset, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
+from nn import StyleGANGenerator, ProGANGenerator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
 
 
 # ---
@@ -27,9 +28,9 @@ def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, ma
 
     if iter_counter % config.log_freq == 0:
 
-        print(f"\n----- Iters: {iter_counter}  |  Images: {image_counter} -----")
-        print(f"\t\t Loss G: {loss_g:.3f}")
-        print(f"\t\t Loss D: {loss_d:.3f}\n")
+        logging.info(f"\n----- Iters: {iter_counter}  |  Images: {image_counter} -----")
+        logging.info(f"\t Loss G: {loss_g:.3f}")
+        logging.info(f"\t Loss D: {loss_d:.3f}\n")
 
         if real.shape[0] > max_samples: real = real[:max_samples]
         if fake.shape[0] > max_samples: fake = fake[:max_samples]        
@@ -149,7 +150,7 @@ def main():
     config.training_output_dir.mkdir(exist_ok=True)
 
     # Data
-    dataset = BraTS20Dataset(config.data_root, config.prog_growth)
+    dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
     if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[MIN_WORKING_RESOLUTION]
     else:                  init_batch_size = config.fixed_batch_size
     dataloader = InfiniteDataLoader(dataset, batch_size=init_batch_size, num_workers=1, shuffle=True)
@@ -163,13 +164,13 @@ def main():
     # Optimizers
     opt_g = Adam(generator.parameters(), lr=0.001, betas=(0.0, 0.99), eps=1e-8)
     opt_d = Adam(discriminator.parameters(), lr=0.001, betas=(0.0, 0.99), eps=1e-8)
-    
+
     # Dashboard    
     wandb.init(project=config.project, name=config.run_name, dir=f"{config.training_output_dir}")
     
     # Training loop
     iter_counter, image_counter = 0, 0
-    print("Training started")
+    logging.info("Training started")
     while image_counter < config.num_training_images:
         
         # Update G
@@ -203,7 +204,7 @@ def main():
         if config.prog_growth:
             generator, discriminator, dataloader = grow_model(generator, discriminator, dataloader, image_counter)
     
-    print("Training complete")
+    logging.info("Training complete")
 
 
 

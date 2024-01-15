@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #SBATCH --job-name=genarch
-#SBATCH --output=/exports/lkeb-hpc/csrao/git-personal/stylegan/training/training_output/shark-%j.log
+#SBATCH --output=/exports/lkeb-hpc/csrao/git-personal/stylegan/stylegan/training_output/shark-%j.log
 
 # Compute and memory
 #SBATCH --partition=LKEBgpu
 # SBATCH --gres=gpu
 #SBATCH --gres=gpu:RTX6000:1
-# SBATCH --nodelist=res-hpc-lkeb06
+# SBATCH --nodelist=res-hpc-lkeb05
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 

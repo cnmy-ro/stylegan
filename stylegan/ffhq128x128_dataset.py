@@ -1,6 +1,6 @@
 from pathlib import Path
 import torch
-from torch.utils.data import Dataset, Sampler, DataLoader
+from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import PIL
 
@@ -8,7 +8,7 @@ import PIL
 
 DATASET_RESOLUTION = 128
 MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
-WORKING_RESOLUTION_TO_BATCH_SIZE = {8: 256, 16: 128, 32: 64, 64: 32, 128: 16}
+WORKING_RESOLUTION_TO_BATCH_SIZE = {8: 128, 16: 128, 32: 64, 64: 32, 128: 16}
 
 
 

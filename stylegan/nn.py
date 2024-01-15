@@ -12,7 +12,7 @@ import numpy as np
 LATENT_DIM = 512
 MAPPING_NET_DEPTH = 8
 MAX_CHANNELS = 512
-NUM_IMG_CHANNELS = 1
+NUM_IMG_CHANNELS = 3
 MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
 
 

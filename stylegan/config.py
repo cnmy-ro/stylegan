@@ -3,12 +3,13 @@ from pathlib import Path
 
 
 project = 'stylegan'
-run_name = 'sgan_brats'
-training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/training/training_output/")
+run_name = 'sgan_ffhq'
+training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/stylegan/training_output/")
 device = 'cuda'
 seed = 0
 
-data_root = Path("/exports/lkeb-hpc/csrao/datasets/BraTS2020_train_kaggle/")
+# data_root = Path("/exports/lkeb-hpc/csrao/datasets/BraTS2020_train_kaggle/")
+data_root = Path("/exports/lkeb-hpc/csrao/datasets/FFHQ/")
 num_training_images = 10e6  # Training time in terms of #real images to be processed
 
 fixed_batch_size = 16   # Only applicable when not using progressive growth
