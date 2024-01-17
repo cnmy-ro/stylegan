@@ -62,19 +62,15 @@ class BraTS20Dataset(Dataset):
         image = torch.from_numpy(image).to(torch.float).unsqueeze(0)  # To tensor of shape (C,H,W)        
 
         if not self.prog_growth:
-            return F.resize(image, (DATASET_RESOLUTION, DATASET_RESOLUTION), F.InterpolationMode.BILINEAR)
+            return F.resize(image, (DATASET_RESOLUTION, DATASET_RESOLUTION), F.InterpolationMode.BICUBIC)
         else:
-            if self.working_resolution < DATASET_RESOLUTION:
-                image_lowres_main = F.resize(image, (self.working_resolution, self.working_resolution), F.InterpolationMode.BILINEAR)
-                if self.alpha is None:  # In stabilization phase, output only the lowres image
-                    return image_lowres_main
-                else:                   # In transition phase, alpha-blend between current lowres and a 2x nearest upsampled version of this image from previous resolution
-                    assert self.working_resolution > MIN_WORKING_RESOLUTION
-                    image_lowres_skip = F.resize(image, (self.working_resolution // 2, self.working_resolution // 2), F.InterpolationMode.BILINEAR)  # This mirrors what happens inside the generator during transition phase
-                    image_lowres_skip = F.resize(image_lowres_skip, (self.working_resolution, self.working_resolution), F.InterpolationMode.NEAREST) #
-                    return (1 - self.alpha) * image_lowres_skip + self.alpha * image_lowres_main                                                     #
-            else:
-                return F.resize(image, (DATASET_RESOLUTION, DATASET_RESOLUTION), F.InterpolationMode.BILINEAR)
+            image_lowres_main = F.resize(image, (self.working_resolution, self.working_resolution), F.InterpolationMode.BICUBIC)
+            if self.alpha is None:  # In stabilization phase, output only the lowres image
+                return image_lowres_main
+            else:                   # In transition phase, alpha-blend between current lowres and a 2x nearest upsampled version of this image from previous resolution
+                image_lowres_skip = F.resize(image, (self.working_resolution // 2, self.working_resolution // 2), F.InterpolationMode.BICUBIC)   # This mirrors what happens inside the generator during transition phase
+                image_lowres_skip = F.resize(image_lowres_skip, (self.working_resolution, self.working_resolution), F.InterpolationMode.NEAREST) #
+                return (1 - self.alpha) * image_lowres_skip + self.alpha * image_lowres_main                                                     #
 
     def double_working_resolution(self):
         self.working_resolution *= 2

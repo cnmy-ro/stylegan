@@ -61,15 +61,12 @@ class Discriminator(nn.Module):
         return pred
     
     def _compute_input_features(self, image):
-        if self.prog_growth:
-            if self.has_unfused_new_block:
-                x_main = self.from_rgb(image)
-                x_main = self.new_block(x_main)
-                x_skip = F.avg_pool2d(image, kernel_size=2, stride=2)
-                x_skip = self.from_rgb_skip(x_skip)
-                x = (1 - self.alpha) * x_skip + self.alpha * x_main
-            else:
-                x = self.from_rgb(image)
+        if self.prog_growth and self.has_unfused_new_block:
+            x_main = self.from_rgb(image)
+            x_main = self.new_block(x_main)
+            x_skip = F.avg_pool2d(image, kernel_size=2, stride=2)
+            x_skip = self.from_rgb_skip(x_skip)
+            x = (1 - self.alpha) * x_skip + self.alpha * x_main
         else:
             x = self.from_rgb(image)
         return x
@@ -203,15 +200,12 @@ class ProGANGenerator(nn.Module):
         return image
 
     def _compute_output_image(self, x):
-        if self.prog_growth:
-            if self.has_unfused_new_block:
-                image_main = self.new_block(x)
-                image_main = self.to_rgb(image_main)
-                image_skip = self.to_rgb_skip(x)
-                image_skip = F.interpolate(image_skip, scale_factor=2, mode='nearest')
-                image = (1 - self.alpha) * image_skip + self.alpha * image_main
-            else:
-                image = self.to_rgb(x)
+        if self.prog_growth and self.has_unfused_new_block:
+            image_main = self.new_block(x)
+            image_main = self.to_rgb(image_main)
+            image_skip = self.to_rgb_skip(x)
+            image_skip = F.interpolate(image_skip, scale_factor=2, mode='nearest')
+            image = (1 - self.alpha) * image_skip + self.alpha * image_main
         else:
             image = self.to_rgb(x)
         return image
@@ -378,15 +372,12 @@ class SynthesisNetwork(nn.Module):
         return image
 
     def _compute_output_image(self, x, w):
-        if self.prog_growth:
-            if self.has_unfused_new_block:
-                image_main = self.new_block(x, w)
-                image_main = self.to_rgb(image_main)
-                image_skip = self.to_rgb_skip(x)
-                image_skip = F.interpolate(image_skip, scale_factor=2, mode='nearest')
-                image = (1 - self.alpha) * image_skip + self.alpha * image_main
-            else:
-                image = self.to_rgb(x)
+        if self.prog_growth and self.has_unfused_new_block:
+            image_main = self.new_block(x, w)
+            image_main = self.to_rgb(image_main)
+            image_skip = self.to_rgb_skip(x)
+            image_skip = F.interpolate(image_skip, scale_factor=2, mode='nearest')
+            image = (1 - self.alpha) * image_skip + self.alpha * image_main
         else:
             image = self.to_rgb(x)
         return image

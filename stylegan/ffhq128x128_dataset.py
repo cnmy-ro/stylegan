@@ -47,17 +47,13 @@ class FFHQ128x128Dataset(Dataset):
         if not self.prog_growth:
             return np.asarray(image_orig)
         else:
-            if self.working_resolution < DATASET_RESOLUTION:
-                image_lowres_main = image_orig.resize((self.working_resolution, self.working_resolution), PIL.Image.BOX)
-                if self.alpha is None:  # In stabilization phase, output only the lowres image
-                    return np.asarray(image_lowres_main)
-                else:                   # In transition phase, alpha-blend between current lowres and a 2x nearest upsampled version of this image from previous resolution
-                    assert self.working_resolution > MIN_WORKING_RESOLUTION
-                    image_lowres_skip = image_orig.resize((self.working_resolution // 2, self.working_resolution // 2), PIL.Image.BOX)  # This mirrors what happens inside the generator during transition phase
-                    image_lowres_skip = image_lowres_skip.resize((self.working_resolution, self.working_resolution), PIL.Image.NEAREST) #
-                    return (1 - self.alpha) * np.asarray(image_lowres_skip) + self.alpha * np.asarray(image_lowres_main)                #
-            else:
-                return np.asarray(image_orig)
+            image_lowres_main = image_orig.resize((self.working_resolution, self.working_resolution), PIL.Image.BICUBIC)                
+            if self.alpha is None:  # In stabilization phase, output only the lowres image
+                return np.asarray(image_lowres_main)
+            else:                   # In transition phase, alpha-blend between current lowres and a 2x nearest upsampled version of this image from previous resolution
+                image_lowres_skip = image_orig.resize((self.working_resolution // 2, self.working_resolution // 2), PIL.Image.BICUBIC) # This mirrors what happens inside the generator during transition phase
+                image_lowres_skip = image_lowres_skip.resize((self.working_resolution, self.working_resolution), PIL.Image.NEAREST)    #
+                return (1 - self.alpha) * np.asarray(image_lowres_skip) + self.alpha * np.asarray(image_lowres_main)                   #
     
     def double_working_resolution(self):
         self.working_resolution *= 2

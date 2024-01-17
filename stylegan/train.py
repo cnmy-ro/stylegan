@@ -153,7 +153,7 @@ def main():
     dataset = FFHQ128x128Dataset(config.data_root, 'train', config.prog_growth)
     if config.prog_growth: init_batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[MIN_WORKING_RESOLUTION]
     else:                  init_batch_size = config.fixed_batch_size
-    dataloader = InfiniteDataLoader(dataset, batch_size=init_batch_size, num_workers=1, shuffle=True)
+    dataloader = InfiniteDataLoader(dataset, batch_size=init_batch_size, num_workers=0, shuffle=True)
     
     # Model
     if config.generator_design == 'progan':   generator_class = ProGANGenerator
