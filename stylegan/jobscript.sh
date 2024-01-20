@@ -12,7 +12,7 @@
 #SBATCH --cpus-per-task=4
 
 # Time
-#SBATCH --time=10-00:00:00
+#SBATCH --time=3-00:00:00
 
 # Load/add required modules
 module purge

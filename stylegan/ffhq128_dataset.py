@@ -12,7 +12,7 @@ WORKING_RESOLUTION_TO_BATCH_SIZE = {8: 128, 16: 128, 32: 64, 64: 32, 128: 16}
 
 
 
-class FFHQ128x128Dataset(Dataset):
+class FFHQ128Dataset(Dataset):
     """
     Dataset of 128x128 FFHQ thumbnails. For fast prototyping purpose.
     """
