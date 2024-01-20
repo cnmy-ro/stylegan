@@ -59,14 +59,12 @@ class Discriminator(nn.Module):
             x = block(x)
         pred = self.fc_layer(torch.reshape(x, (x.shape[0], -1)))
         return pred
-    
+
     def _compute_input_features(self, image):
         if self.prog_growth and self.has_unfused_new_block:
-            x_main = self.from_rgb(image)
-            x_main = self.new_block(x_main)
-            x_skip = F.avg_pool2d(image, kernel_size=2, stride=2)
-            x_skip = self.from_rgb_skip(x_skip)
-            x = (1 - self.alpha) * x_skip + self.alpha * x_main
+            x_main = self.new_block(self.from_rgb(image))
+            x_skip = self.from_rgb_skip(downsample(image))
+            x = (1 - self.alpha) * x_skip + self.alpha * x_main  # Alpha-blend the features
         else:
             x = self.from_rgb(image)
         return x
@@ -201,11 +199,9 @@ class ProGANGenerator(nn.Module):
 
     def _compute_output_image(self, x):
         if self.prog_growth and self.has_unfused_new_block:
-            image_main = self.new_block(x)
-            image_main = self.to_rgb(image_main)
-            image_skip = self.to_rgb_skip(x)
-            image_skip = F.interpolate(image_skip, scale_factor=2, mode='nearest')
-            image = (1 - self.alpha) * image_skip + self.alpha * image_main
+            image_main = self.to_rgb(self.new_block(x))
+            image_skip = self.to_rgb_skip(upsample(x))
+            image = (1 - self.alpha) * image_skip + self.alpha * image_main  # Alpha-blend the images
         else:
             image = self.to_rgb(x)
         return image
@@ -373,11 +369,9 @@ class SynthesisNetwork(nn.Module):
 
     def _compute_output_image(self, x, w):
         if self.prog_growth and self.has_unfused_new_block:
-            image_main = self.new_block(x, w)
-            image_main = self.to_rgb(image_main)
-            image_skip = self.to_rgb_skip(x)
-            image_skip = F.interpolate(image_skip, scale_factor=2, mode='nearest')
-            image = (1 - self.alpha) * image_skip + self.alpha * image_main
+            image_main = self.to_rgb(self.new_block(x, w))
+            image_skip = self.to_rgb_skip(upsample(x))
+            image = (1 - self.alpha) * image_skip + self.alpha * image_main  # Alpha-blend the images
         else:
             image = self.to_rgb(x)
         return image
@@ -546,6 +540,14 @@ class ConvTranspose2d(nn.Module):
         weight = self.weight * self.weight_gain
         bias = self.bias
         return F.conv_transpose2d(x, weight, bias, self.stride, self.padding, self.output_padding, dilation=self.dilation)
+
+
+def upsample(x):
+    return F.interpolate(x, scale_factor=2, mode='nearest')
+
+
+def downsample(x):
+    return F.avg_pool2d(x, kernel_size=2, stride=2)
 
 
 

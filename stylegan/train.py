@@ -69,7 +69,7 @@ def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter, image_
         torch.save(checkpoint, path)
 
 
-def grow_model(generator, discriminator, dataloader, image_counter):
+def grow_model(generator, discriminator, opt_g, opt_d, dataloader, image_counter):
     """
     |--------------- growth full cycle ------------------|
     |--- transition phase ---|--- stabilization phase ---|
@@ -92,17 +92,15 @@ def grow_model(generator, discriminator, dataloader, image_counter):
 
     # If already at max resolution, do nothing and return
     if dataloader.dataset.working_resolution == DATASET_RESOLUTION and not discriminator.has_unfused_new_block:
-        return generator, discriminator, dataloader
+        return generator, discriminator, opt_g, opt_d, dataloader
     
     # If at the start of a growth half-cycle, handle growth
     if at_start_of_growth_half_cycle():
 
         # If this is the start of transition phase, double the resolution and grow new block
         if in_transition_phase():
-
             generator.grow_new_block()
             discriminator.grow_new_block()
-
             dataloader.dataset.double_working_resolution()
             batch_size = WORKING_RESOLUTION_TO_BATCH_SIZE[dataloader.dataset.working_resolution]
             dataloader = InfiniteDataLoader(dataloader.dataset, batch_size=batch_size, num_workers=dataloader.num_workers, shuffle=True)
@@ -111,9 +109,13 @@ def grow_model(generator, discriminator, dataloader, image_counter):
         # If this is the start of stabilization phase, fuse the block into net body
         elif in_stabilization_phase():
             generator.fuse_new_block()
-            discriminator.fuse_new_block()
-            dataloader.dataset.reset_alpha()    
+            discriminator.fuse_new_block()            
+            dataloader.dataset.reset_alpha()
             # print("FUSED")
+    
+        # Re-initialize the opts with the updated model parameter lists. This simple solution comes with the drawback of losing the old opts' states.
+        opt_g = Adam(generator.parameters(), lr=0.001, betas=(0.0, 0.99), eps=1e-8)
+        opt_d = Adam(discriminator.parameters(), lr=0.001, betas=(0.0, 0.99), eps=1e-8)
 
     # If inside the transition phase, update alpha
     elif in_transition_phase():
@@ -127,7 +129,7 @@ def grow_model(generator, discriminator, dataloader, image_counter):
     elif in_stabilization_phase():
         pass
 
-    return generator, discriminator, dataloader
+    return generator, discriminator, opt_g, opt_d, dataloader
 
 
 def nsgan_loss(pred, is_real):
@@ -202,8 +204,8 @@ def main():
 
         # Progressive growing        
         if config.prog_growth:
-            generator, discriminator, dataloader = grow_model(generator, discriminator, dataloader, image_counter)
-    
+            generator, discriminator, opt_g, opt_d, dataloader = grow_model(generator, discriminator, opt_g, opt_d, dataloader, image_counter)
+
     logging.info("Training complete")
 
 
