@@ -1,7 +1,6 @@
 from pathlib import Path
 
 
-
 project = 'stylegan'
 run_name = 'sgan_ffhq'
 training_output_dir = Path("/exports/lkeb-hpc/csrao/git-personal/stylegan/stylegan/training_output/")

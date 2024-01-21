@@ -5,16 +5,13 @@ from torch.nn.parameter import Parameter
 import numpy as np
 
 
-
 # ---
 # Constants
-
 LATENT_DIM = 512
 MAPPING_NET_DEPTH = 8
 MAX_CHANNELS = 512
 NUM_IMG_CHANNELS = 3
 MIN_WORKING_RESOLUTION = 8   # Used during progressive growing
-
 
 
 # ---
@@ -112,7 +109,6 @@ class Discriminator(nn.Module):
         # Clear flag
         self.has_unfused_new_block = False
     
-
 class DiscriminatorBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels, is_last_block=False):
@@ -142,8 +138,7 @@ class DiscriminatorBlock(nn.Module):
         return next(self.parameters()).device
     
     def forward(self, x):
-        return self.block(x)
-    
+        return self.block(x)  
 
 class MinibatchSDLayer(nn.Module):
 
@@ -153,7 +148,6 @@ class MinibatchSDLayer(nn.Module):
         sd = sd.repeat((batch_size, 1, height, width))
         x = torch.cat([x, sd], dim=1)
         return x
-
 
 
 # ---
@@ -249,7 +243,6 @@ class ProGANGenerator(nn.Module):
         # Clear flag
         self.has_unfused_new_block = False
 
-
 class ProGANGeneratorBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels, is_first_block=False):
@@ -283,7 +276,6 @@ class ProGANGeneratorBlock(nn.Module):
         return self.block(x)
 
 
-
 # ---
 # StyleGAN generator
 
@@ -310,7 +302,6 @@ class StyleGANGenerator(nn.Module):
     def fuse_new_block(self):
         self.synthesis_net.fuse_new_block()    
 
-
 class MappingNetwork(nn.Module):
 
     def __init__(self):
@@ -325,7 +316,6 @@ class MappingNetwork(nn.Module):
 
     def forward(self, z):
         return self.model(z)
-
 
 class SynthesisNetwork(nn.Module):
 
@@ -419,7 +409,6 @@ class SynthesisNetwork(nn.Module):
         # Clear flag
         self.has_unfused_new_block = False
 
-
 class SynthesisNetworkBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels, is_first_block=False):
@@ -455,7 +444,6 @@ class SynthesisNetworkBlock(nn.Module):
             else:                             x = layer(x)
         return x
     
-
 class NoiseLayer(nn.Module):
     
     def __init__(self, num_channels):
@@ -466,7 +454,6 @@ class NoiseLayer(nn.Module):
         batch_size, _, height, width = x.shape
         noise = torch.randn((batch_size, 1, height, width), device=x.device)
         return x + self.scaling_factors * noise
-
 
 class AdaINLayer(nn.Module):
     
@@ -482,7 +469,6 @@ class AdaINLayer(nn.Module):
         style_b = self.affine_b(w).reshape(batch_size, num_channels, 1, 1)
         x = self.instance_norm(x) * style_s + style_b
         return x
-
 
 
 # ---
@@ -502,7 +488,6 @@ class Linear(nn.Module):
         bias = self.bias * self.bias_gain
         return F.linear(x, weight, bias)
 
-
 class Conv2d(nn.Module):
 
     def __init__(self, in_channels, out_channels, kernel_size, padding=0, padding_mode='reflect'):
@@ -521,7 +506,6 @@ class Conv2d(nn.Module):
         x = F.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode)        
         return F.conv2d(x, weight, bias)
     
-
 class ConvTranspose2d(nn.Module):
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, output_padding=0, dilation=1):
@@ -541,14 +525,11 @@ class ConvTranspose2d(nn.Module):
         bias = self.bias
         return F.conv_transpose2d(x, weight, bias, self.stride, self.padding, self.output_padding, dilation=self.dilation)
 
-
 def upsample(x):
     return F.interpolate(x, scale_factor=2, mode='nearest')
 
-
 def downsample(x):
     return F.avg_pool2d(x, kernel_size=2, stride=2)
-
 
 
 # ---

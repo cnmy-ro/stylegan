@@ -8,19 +8,15 @@ from torchvision.utils import make_grid
 import wandb
 
 import config
-from stylegan.ffhq128_dataset import InfiniteDataLoader, FFHQ128Dataset, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
+from ffhq128_dataset import InfiniteDataLoader, FFHQ128Dataset, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
 # from brats_dataset import BraTS20Dataset, DATASET_RESOLUTION, WORKING_RESOLUTION_TO_BATCH_SIZE
 from nn import StyleGANGenerator, ProGANGenerator, Discriminator, LATENT_DIM, MIN_WORKING_RESOLUTION
 
 
-# ---
 # Reproducibility
 np.random.seed(config.seed)
 torch.manual_seed(config.seed)
 
-
-# ---
-# Utils
 
 def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, max_samples=16):
 
@@ -46,7 +42,6 @@ def log_to_dashboard(loss_g, loss_d, real, fake, iter_counter, image_counter, ma
 
         wandb.log(log_dict, step=iter_counter)
 
-
 def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter, image_counter):
     
     # Save checkpoint only if there're no unfused blocks
@@ -67,7 +62,6 @@ def dump_checkpoint(generator, discriminator, opt_g, opt_d, iter_counter, image_
         checkpoint_dir.mkdir(exist_ok=True)
         path = checkpoint_dir / Path(f"iter_{iter_counter}.pt")
         torch.save(checkpoint, path)
-
 
 def grow_model(generator, discriminator, opt_g, opt_d, dataloader, image_counter):
     """
@@ -131,20 +125,17 @@ def grow_model(generator, discriminator, opt_g, opt_d, dataloader, image_counter
 
     return generator, discriminator, opt_g, opt_d, dataloader
 
-
 def nsgan_loss(pred, is_real):
     if is_real: target = torch.ones_like(pred)
     else:       target = torch.zeros_like(pred)
     loss = F.binary_cross_entropy_with_logits(pred, target)
     return loss
 
-
 def r1_regularizer(discriminator, real, r1_gamma):
     real.requires_grad = True
     pred_real = discriminator(real)
     image_grad = torch.autograd.grad(outputs=[pred_real.sum()], inputs=[real])[0]
     return r1_gamma * 0.5 * image_grad.square().sum(dim=[1, 2, 3]).mean()
-
 
 def main():
     
@@ -207,7 +198,6 @@ def main():
             generator, discriminator, opt_g, opt_d, dataloader = grow_model(generator, discriminator, opt_g, opt_d, dataloader, image_counter)
 
     logging.info("Training complete")
-
 
 
 # ---

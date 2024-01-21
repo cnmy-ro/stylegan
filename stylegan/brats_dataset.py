@@ -82,7 +82,6 @@ class BraTS20Dataset(Dataset):
     def reset_alpha(self):
         self.alpha = None
         
-
 def rescale_intensity(image, from_range=None, to_range=[-1,1], clip=False):
     
     if from_range is None:
