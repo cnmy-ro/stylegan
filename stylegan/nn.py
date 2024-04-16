@@ -287,10 +287,19 @@ class StyleGANGenerator(nn.Module):
         self.mapping_net = MappingNetwork()
         self.synthesis_net = SynthesisNetwork(final_resolution, prog_growth)
         
-    def forward(self, z):
-        z = z / (z.square().mean(dim=1, keepdim=True) + 1e-8).sqrt()  # Normalize
-        w = self.mapping_net(z)
-        image = self.synthesis_net(w)
+    # def forward(self, z):
+    #     z = z / (z.square().mean(dim=1, keepdim=True) + 1e-8).sqrt()  # Normalize
+    #     w = self.mapping_net(z)
+    #     image = self.synthesis_net(w)
+    #     return image
+    def forward(self, z1, z2, z3):
+        z1 = z1 / (z1.square().mean(dim=1, keepdim=True) + 1e-8).sqrt()  # Normalize
+        z2 = z2 / (z2.square().mean(dim=1, keepdim=True) + 1e-8).sqrt()  # Normalize
+        z3 = z3 / (z3.square().mean(dim=1, keepdim=True) + 1e-8).sqrt()  # Normalize
+        w1 = self.mapping_net(z1)
+        w2 = self.mapping_net(z2)
+        w3 = self.mapping_net(z3)
+        image = self.synthesis_net(w1, w2, w3)
         return image
     
     def set_alpha(self, alpha):
@@ -349,10 +358,24 @@ class SynthesisNetwork(nn.Module):
         # Initial lowest res (4x4) feature map
         self.x_init = Parameter(torch.ones((1, MAX_CHANNELS, 4, 4)))
 
-    def forward(self, w):
-        batch_size, _ = w.shape
+    # def forward(self, w):        
+    #     batch_size, _ = w.shape
+    #     x = torch.repeat_interleave(self.x_init, repeats=batch_size, dim=0)
+    #     for block in self.body:
+    #         x = block(x, w)
+    #     image = self._compute_output_image(x, w)
+    #     return image
+    def forward(self, w1, w2, w3):        
+        batch_size, _ = w1.shape
         x = torch.repeat_interleave(self.x_init, repeats=batch_size, dim=0)
-        for block in self.body:
+        num_blocks = len(self.body)
+        for b, block in enumerate(self.body):
+            if b >= num_blocks - 2:
+                w = w3
+            elif b < num_blocks - 2 and b >= num_blocks - 4:
+                w = w2
+            else:
+                w = w1
             x = block(x, w)
         image = self._compute_output_image(x, w)
         return image
